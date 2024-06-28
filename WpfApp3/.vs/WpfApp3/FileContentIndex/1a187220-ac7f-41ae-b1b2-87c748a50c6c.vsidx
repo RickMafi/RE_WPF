@@ -1,0 +1,540 @@
+NSTANTS_OFFSET ].w;
+}
+// This is used to make cloud layer have less of a gray-out effect especially over water,
+// than the visuals produced by an alpha of 1.0f (as suggested by Shadow_Color aka _FoWShadowColor parameter's alpha).
+static const float GH_FOW_SHADOW_ALPHA = 0.25f;
+
+// Max clouds alpha at the closest zoom level (might be below apparent parallax height, so best use 0)
+static const float GH_FOW_CLOUDS_LOW_ALPHA    = 0.0f;
+
+// Max clouds alpha at zoom levels where terrain is visible
+// but not filled with overlay colors.
+static const float GH_FOW_CLOUDS_MEDIUM_ALPHA = 0.25f;
+
+// Max clouds alpha between the first zoom level where
+// terrain overlays are filled and the first flat map zoom level.
+static const float GH_FOW_CLOUDS_HIGH_ALPHA   = 0.6f;
+
+// Max clouds alpha on flat map.
+static const float GH_FOW_CLOUDS_FLAT_MAP_ALPHA = 0.0f;
+
+// The values below replace GameFogOfWar constant buffer from Victoria 3's fog_of_war.fxh (gh_vic3_fog_of_war.fxh)
+// and are taken (with minor modifications) from that game's gfx/map/fog_of_war/fog_of_war.settings at version 1.0.3.
+static const float4 _FoWShadowColor = float4(float3(23.0f, 23.0f, 23.0f)/255.0f, GH_FOW_SHADOW_ALPHA); // hsv{ 0.560000 0.85000 0.160000 1.000000 }
+static const float4 _FoWCloudsColor = float4(1.0f, 1.0f, 1.0f, 1.0f); // hsv{ 0.650000 0.100000 1.000000 1.000000 }
+static const float4 _FoWCloudsColorSecondary = float4(float3(200.0f, 200.0f, 200.0f)/255.0f, 1.0f); // hsv{ 0.562500 0.187500 0.804688 1.000000 }
+static const float _FoWCloudsColorGradientMin = 0.0f;
+static const float _FoWCloudsColorGradientMax = 1.0f;
+static const float _FoWCloudHeight = 44.0f;
+static const float _FoWShadowMult = 0.6f;
+static const float _FoWShadowTexStart = 0.0f;
+static const float _FoWShadowTexStop = 1.0f;
+static const float _FoWShadowAlphaStart = 0.0f;
+static const float _FoWShadowAlphaStop = 1.0f;
+static const float _FowShadowLayer1Min = 0.45f;
+static const float _FowShadowLayer1Max = 1.35f;
+static const float _FowShadowLayer2Min = 1.0f;
+static const float _FowShadowLayer2Max = 3.0f;
+static const float _FowShadowLayer3Min = 1.0f;
+static const float _FowShadowLayer3Max = 3.0f;
+static const float _FoWCloudsAlphaStart = 0.0f;
+static const float _FoWCloudsAlphaStop = 1.0f;
+static const float _FoWMasterStart = 0.0f;
+static const float _FoWMasterStop = 1.28f;
+static const int _FoWMasterUVTiling = 1;
+static const float _FoWMasterUVRotation = 0.0f; // absent from Vic3's fog_of_war.settings
+static const float2 _FoWMasterUVScale = float2(1.0f, -0.5f);
+static const float2 _FoWMasterUVSpeed = float2(0.3f, -0.1f);
+static const float _FoWLayer1Min = 0.0f;
+static const float _FoWLayer1Max = 1.0f;
+static const int _FoWLayer1Tiling = 9;
+static const float _FoWLayer2Min = 0.039f;
+static const float _FoWLayer2Max = 0.58f;
+static const float _FoWLayer2Balance = 0.481529f;
+static const int _FoWLayer2Tiling = 12;
+static const float _FoWLayer3Min = 0.46842f;
+static const float _FoWLayer3Max = 1.0f;
+static const float _FoWLayer3Balance = 0.300723f;
+static const int _FoWLayer3Tiling = 20;
+static const float _FoWShowAlphaMask = 0.0f; // no
+static const float2 _FoWLayer1Speed = float2(-0.6f, 0.5f);
+static const float2 _FoWLayer2Speed = float2(-1.6f, 1.2f);
+static const float2 _FoWLayer3Speed = float2(-1.5f, 1.0f);
+float4x4 GetWorldMatrixMapObject( in uint InstanceIndex )
+{
+	int i = int(InstanceIndex) * 4;
+	return Create4x4( PdxReadBuffer4( MapObjectBuffer, i+0 ), PdxReadBuffer4( MapObjectBuffer, i+1 ), PdxReadBuffer4( MapObjectBuffer, i+2 ), PdxReadBuffer4( MapObjectBuffer, i+3 ) );
+}
+uint UnpackAndGetMapObjectInstanceIndex( in uint InstanceIndex24_Opacity8 )
+{
+	return ( InstanceIndex24_Opacity8 >> 8 ) & uint(0x00ffffff);
+}
+float UnpackAndGetMapObjectOpacity( in uint InstanceIndex24_Opacity8 )
+{
+	const float OpacityScale = 1.0f / float(0x0000007f);
+	float Opacity = float(uint(InstanceIndex24_Opacity8 & uint(0x0000007f))) * OpacityScale;
+	if( (InstanceIndex24_Opacity8 & uint(0x00000080) ) != 0 )
+	{
+		Opacity *= -1.0f;
+	}
+	return Opacity;
+}
+float4x4 UnpackAndGetMapObjectWorldMatrix( in uint InstanceIndex24_Opacity8 )
+{
+	uint InstanceIndex = UnpackAndGetMapObjectInstanceIndex( InstanceIndex24_Opacity8 );
+	return GetWorldMatrixMapObject( InstanceIndex );
+}
+void UnpackMapObjectInstanceData( in uint InstanceIndex24_Opacity8, out uint InstanceIndex, out float Opacity )
+{
+	InstanceIndex = UnpackAndGetMapObjectInstanceIndex( InstanceIndex24_Opacity8 );
+	Opacity = UnpackAndGetMapObjectOpacity( InstanceIndex24_Opacity8 );
+}
+
+struct STerrainVertex
+{
+	float3 WorldSpacePos;
+};
+
+STerrainVertex CalcTerrainVertex( float2 WithinNodePos, float2 NodeOffset, float NodeScale, float2 LodDirection, float LodLerpFactor )
+{
+	STerrainVertex Out;
+
+	NodeScale = 1.0 / NodeScale;
+	NodeOffset = NodeOffset * NodeScale;
+
+	float2 QuadtreePosition = WithinNodePos * NodeScale + NodeOffset;
+
+	float2 WorldSpacePosXZ = QuadtreePosition * NormQuadtreeToWorld;
+
+	// The world will always have an overshoot of half a terrain quadtree cell's worth of vertices. Everything works fine if we just clamp those vertices to world extents here.
+	WorldSpacePosXZ = clamp(WorldSpacePosXZ, float2(0.f, 0.f), WorldExtents);
+
+	#ifdef PDX_TERRAIN_HEIGHT_MULTISAMPLE
+		float Height = GetHeightMultisample( WorldSpacePosXZ, 0.25 );
+	#else
+		float Height = GetHeight( WorldSpacePosXZ );
+	#endif
+
+	float2 ScaledLodDirection = ( LodDirection * NodeScale / QuadtreeLeafNodeScale ) * OriginalHeightmapToWorldSpace;
+	float LerpedHeight = GetLerpedHeight( WorldSpacePosXZ, ScaledLodDirection );
+	Height = lerp( Height, LerpedHeight, LodLerpFactor / UINT16_MAX );
+
+	Out.WorldSpacePos = float3( WorldSpacePosXZ.x, Height, WorldSpacePosXZ.y );
+
+	return Out;
+}
+
+float3 FixPositionForSkirt( float3 WorldSpacePosition, uint nVertexID )
+{
+	WorldSpacePosition.y += SkirtSize * ((nVertexID + 1) % 2);
+	return WorldSpacePosition;
+}
+
+	struct VS_OUTPUT_PDXMESH
+	{
+		float4 Position;
+		float3 WorldSpacePos;
+		float3 Normal;
+		float3 Tangent;
+		float3 Bitangent;
+		float2 UV0;
+		float2 UV1;
+		float2 UV2;
+	};
+	
+	struct VS_INPUT_PDXMESH
+	{
+		float3 Position;
+		float3 Normal;
+		float4 Tangent;
+		float2 UV0;
+	#ifdef PDX_MESH_UV1
+		float2 UV1;
+	#endif
+	#ifdef PDX_MESH_UV2
+		float2 UV2;
+	#endif
+	#ifdef PDX_MESH_SKINNED
+		uint4 BoneIndex;
+		float3 BoneWeight;
+	#endif
+	#ifdef PDX_MESH_BLENDSHAPES
+		uint ObjectInstanceIndex;
+		uint BlendShapeInstanceIndex;
+		uint VertexID;
+	#endif
+	};
+	
+	VS_INPUT_PDXMESH PdxMeshConvertInput( in VS_INPUT_PDXMESHSTANDARD Input )
+	{
+		VS_INPUT_PDXMESH Out;
+		Out.Position = Input.Position;
+		Out.Normal = Input.Normal;
+		Out.Tangent = Input.Tangent;
+		Out.UV0 = Input.UV0;
+	#ifdef PDX_MESH_UV1
+		Out.UV1 = Input.UV1;
+	#endif
+	#ifdef PDX_MESH_UV2
+		Out.UV2 = Input.UV2;
+	#endif
+	#ifdef PDX_MESH_SKINNED
+		Out.BoneIndex = Input.BoneIndex;
+		Out.BoneWeight = Input.BoneWeight;
+	#endif
+	#ifdef PDX_MESH_BLENDSHAPES
+		Out.ObjectInstanceIndex = Input.InstanceIndices.y;
+		Out.BlendShapeInstanceIndex = Input.InstanceIndices.z;
+		Out.VertexID = Input.VertexID;
+	#endif
+
+		return Out;
+	}
+	
+// This depends on the heightmap.fxh, the shader that enables this define will need to include that fxh
+#ifdef PDX_MESH_SNAP_VERTICES_TO_TERRAIN
+	float3 SnapVerticesToTerrain( float2 WorldSpacePosXZ, float VertexY, float4x4 WorldMatrix )
+	{
+		float YScale = length( float3( GetMatrixData( WorldMatrix, 0, 1 ), GetMatrixData( WorldMatrix, 1, 1 ), GetMatrixData( WorldMatrix, 2, 1 ) ) );
+		return float3( WorldSpacePosXZ.x, GetHeight( WorldSpacePosXZ ) + VertexY * YScale, WorldSpacePosXZ.y );
+	}
+#endif
+	
+#ifdef PDX_MESH_SKINNED
+	VS_OUTPUT_PDXMESH PdxMeshVertexShader( VS_INPUT_PDXMESH Input, uint JointsInstanceIndex, float4x4 WorldMatrix )
+	{
+		VS_OUTPUT_PDXMESH Out;
+
+		float4 Position = float4( Input.Position.xyz, 1.0 );
+		float3 BaseNormal = Input.Normal;
+		float3 BaseTangent = Input.Tangent.xyz;
+
+	#ifdef PDX_MESH_BLENDSHAPES
+		ApplyBlendShapes( Position.xyz, BaseNormal, BaseTangent, Input.BlendShapeInstanceIndex, Input.ObjectInstanceIndex, Input.VertexID );
+	#endif
+
+		float4 SkinnedPosition = vec4( 0.0 );
+		float3 SkinnedNormal = vec3( 0.0 );
+		float3 SkinnedTangent = vec3( 0.0 );
+		float3 SkinnedBitangent = vec3( 0.0 );
+
+		float4 Weights = float4( Input.BoneWeight.xyz, 1.0 - Input.BoneWeight.x - Input.BoneWeight.y - Input.BoneWeight.z );
+		for( int i = 0; i < PDXMESH_MAX_INFLUENCE; ++i )
+		{
+			uint BoneIndex = Input.BoneIndex[i];
+			uint OffsetIndex = BoneIndex + JointsInstanceIndex;
+
+			float4x4 VertexMatrix = PdxMeshGetJointVertexMatrix( OffsetIndex );
+
+			SkinnedPosition += mul( VertexMatrix, Position ) * Weights[ i ];
+
+			float3 XAxis = float3( GetMatrixData( VertexMatrix, 0, 0 ), GetMatrixData( VertexMatrix, 0, 1 ), GetMatrixData( VertexMatrix, 0, 2 ) );
+			float3 YAxis = float3( GetMatrixData( VertexMatrix, 1, 0 ), GetMatrixData( VertexMatrix, 1, 1 ), GetMatrixData( VertexMatrix, 1, 2 ) );
+			float3 ZAxis = float3( GetMatrixData( VertexMatrix, 2, 0 ), GetMatrixData( VertexMatrix, 2, 1 ), GetMatrixData( VertexMatrix, 2, 2 ) );
+			
+			float XSqMagnitude = dot( XAxis, XAxis );
+			float YSqMagnitude = dot( YAxis, YAxis );
+			float ZSqMagnitude = dot( ZAxis, ZAxis );
+			
+			float3 SqScale = float3( XSqMagnitude, YSqMagnitude, ZSqMagnitude );
+			float3 SqScaleReciprocal = float3( 1.f, 1.f, 1.f ) / SqScale;
+			
+			float3 ScaledNormal = BaseNormal * SqScaleReciprocal;
+			float3 ScaledTangent = BaseTangent * SqScaleReciprocal;
+			
+			float3x3 VertexRotationMatrix = CastTo3x3( VertexMatrix );
+			
+			float3 Normal = mul( VertexRotationMatrix, ScaledNormal );
+			float3 Tangent = mul( VertexRotationMatrix, ScaledTangent );
+			float3 Bitangent = cross( Normal, Tangent ) * Input.Tangent.w;
+
+			Normal = normalize( Normal );
+			Tangent = normalize( Tangent );
+			Bitangent = normalize( Bitangent );
+
+			SkinnedNormal += Normal * Weights[i];
+			SkinnedTangent += Tangent * Weights[i];
+			SkinnedBitangent += Bitangent * Weights[i];
+		}
+
+		Out.Position = mul( WorldMatrix, SkinnedPosition );
+		Out.WorldSpacePos = Out.Position.xyz;
+		Out.WorldSpacePos /= WorldMatrix[3][3];
+		Out.Position = FixProjectionAndMul( ViewProjectionMatrix, Out.Position );
+
+		Out.Normal = normalize( mul( CastTo3x3(WorldMatrix), normalize( SkinnedNormal ) ) );
+		Out.Tangent = normalize( mul( CastTo3x3(WorldMatrix), normalize( SkinnedTangent ) ) );
+		Out.Bitangent = normalize( mul( CastTo3x3(WorldMatrix), normalize( SkinnedBitangent ) ) );
+
+		Out.UV0 = Input.UV0;
+	#ifdef PDX_MESH_UV1
+		Out.UV1 = Input.UV1;
+	#else
+		Out.UV1 = vec2( 0.0 );
+	#endif
+	#ifdef PDX_MESH_UV2
+		Out.UV2 = Input.UV2;
+	#else
+		Out.UV2 = vec2( 0.0 );
+	#endif
+
+		return Out;
+	}
+	
+#else
+
+	VS_OUTPUT_PDXMESH PdxMeshVertexShader( VS_INPUT_PDXMESH Input, uint JointsInstanceIndex, float4x4 WorldMatrix )
+	{
+		VS_OUTPUT_PDXMESH Out;
+
+		float4 Position = float4( Input.Position.xyz, 1.0 );
+		float3 Normal = Input.Normal;
+		float3 Tangent = Input.Tangent.xyz;
+
+	#ifdef PDX_MESH_BLENDSHAPES
+		ApplyBlendShapes( Position.xyz, Normal, Tangent, Input.BlendShapeInstanceIndex, Input.ObjectInstanceIndex, Input.VertexID );
+	#endif
+
+		Out.Normal = normalize( mul( CastTo3x3( WorldMatrix ), Normal ) );
+		Out.Tangent = normalize( mul( CastTo3x3( WorldMatrix ), Tangent ) );
+		Out.Bitangent = normalize( cross( Out.Normal, Out.Tangent ) * Input.Tangent.w );
+		Out.Position = mul( WorldMatrix, Position );
+		
+	#ifdef PDX_MESH_SNAP_VERTICES_TO_TERRAIN
+		Out.Position.xyz = SnapVerticesToTerrain( Out.Position.xz, Input.Position.y, WorldMatrix );
+	#endif
+	
+		Out.WorldSpacePos = Out.Position.xyz;
+		Out.WorldSpacePos /= WorldMatrix[3][3];
+		Out.Position = FixProjectionAndMul( ViewProjectionMatrix, Out.Position );
+
+		Out.UV0 = Input.UV0;
+	#ifdef PDX_MESH_UV1
+		Out.UV1 = Input.UV1;
+	#else
+		Out.UV1 = vec2( 0.0 );
+	#endif
+	#ifdef PDX_MESH_UV2
+		Out.UV2 = Input.UV2;
+	#else
+		Out.UV2 = vec2( 0.0 );
+	#endif
+
+		return Out;
+	}
+	
+#endif
+
+VS_OUTPUT_PDXMESH PdxMeshVertexShaderStandard( VS_INPUT_PDXMESHSTANDARD Input )
+{
+	return PdxMeshVertexShader( PdxMeshConvertInput( Input ), Input.InstanceIndices.x, PdxMeshGetWorldMatrix( Input.InstanceIndices.y ) );
+}
+
+VS_OUTPUT_PDXMESHSHADOW PdxMeshVertexShaderShadow( VS_INPUT_PDXMESH Input, uint JointsInstanceIndex, float4x4 WorldMatrix )
+{
+	VS_OUTPUT_PDXMESHSHADOW Out;
+			
+	float4 Position = float4( Input.Position.xyz, 1.0 );
+
+#ifdef PDX_MESH_BLENDSHAPES
+	ApplyBlendShapesPositionOnly( Position.xyz, Input.BlendShapeInstanceIndex, Input.ObjectInstanceIndex, Input.VertexID );
+#endif
+	
+#ifdef PDX_MESH_SKINNED
+	float4 vWeight = float4( Input.BoneWeight.xyz, 1.0 - Input.BoneWeight.x - Input.BoneWeight.y - Input.BoneWeight.z );
+	float4 vSkinnedPosition = vec4( 0.0 );
+	for( int i = 0; i < PDXMESH_MAX_INFLUENCE; ++i )
+	{
+		int nIndex = int( Input.BoneIndex[i] );
+		float4x4 VertexMatrix = PdxMeshGetJointVertexMatrix( nIndex + JointsInstanceIndex );
+		vSkinnedPosition += mul( VertexMatrix, Position ) * vWeight[ i ];
+	}
+	Out.Position = mul( WorldMatrix, vSkinnedPosition );
+#else
+	Out.Position = mul( WorldMatrix, Position );
+	
+	#ifdef PDX_MESH_SNAP_VERTICES_TO_TERRAIN
+		Out.Position.xyz = SnapVerticesToTerrain( Out.Position.xz, Input.Position.y, WorldMatrix );
+	#endif
+#endif
+	Out.Position = FixProjectionAndMul( ViewProjectionMatrix, Out.Position );
+	Out.UV = Input.UV0;
+	return Out;
+}
+VS_OUTPUT_PDXMESHSHADOWSTANDARD PdxMeshVertexShaderShadowStandard( VS_INPUT_PDXMESHSTANDARD Input )
+{
+	VS_OUTPUT_PDXMESHSHADOW CommonOut = PdxMeshVertexShaderShadow( PdxMeshConvertInput(Input), Input.InstanceIndices.x, PdxMeshGetWorldMatrix( Input.InstanceIndices.y ) );
+	VS_OUTPUT_PDXMESHSHADOWSTANDARD Out;
+	Out.Position = CommonOut.Position;
+	Out.UV_InstanceIndex.xy = CommonOut.UV;
+	Out.UV_InstanceIndex.z = Input.InstanceIndices.y;
+	return Out;
+}
+
+VS_OUTPUT_WATER ConvertOutputWater( VS_OUTPUT_PDXMESH MeshOutput )
+{
+	VS_OUTPUT_WATER Output;
+		
+	Output.Position = MeshOutput.Position;
+	Output.WorldSpacePos = MeshOutput.WorldSpacePos;
+	Output.UV01 = float2( MeshOutput.WorldSpacePos.x / MapSize.x, 1.0 - MeshOutput.WorldSpacePos.z / MapSize.y );
+	
+	return Output;
+}
+
+VS_INPUT_PDXMESH PdxMeshConvertInput( in VS_INPUT_PDXMESH_MAPOBJECT Input )
+{
+	VS_INPUT_PDXMESH Out;		
+	Out.Position = Input.Position;
+	Out.Normal = Input.Normal;
+	Out.Tangent = Input.Tangent;
+	Out.UV0 = Input.UV0;
+#ifdef PDX_MESH_UV1
+	Out.UV1 = Input.UV1;
+#endif
+#ifdef PDX_MESH_UV2
+	Out.UV2 = Input.UV2;
+#endif
+#ifdef PDX_MESH_SKINNED
+	Out.BoneIndex = uint4(0,0,0,0);
+	Out.BoneWeight = float3(0,0,0);	//Animated map objects not supported
+#endif
+	return Out;
+}
+
+VS_OUTPUT_MAPOBJECT_SHADOW ConvertOutputMapObjectShadow( in VS_OUTPUT_PDXMESHSHADOW Output )
+{
+	VS_OUTPUT_MAPOBJECT_SHADOW Out;
+	Out.Position 					= Output.Position;
+	Out.UV							= Output.UV;
+	Out.InstanceIndex24_Opacity8 	= 0;
+	return Out;
+}
+
+
+
+// === Main Code === 
+
+VS_OUTPUT_WATER main( VS_INPUT_WATER Input )
+{
+	VS_OUTPUT_WATER VertexOut;
+	VertexOut.WorldSpacePos = float3( Input.Position.x, _WaterHeight, Input.Position.y );
+	
+	#ifdef JOMINIWATER_BORDER_LERP
+		VertexOut.WorldSpacePos.x = JOMINIWATER_MapSize.x + Input.Position.x * JOMINIWATER_BorderLerpSize;
+	#endif
+	
+	VertexOut.Position = FixProjectionAndMul( ViewProjectionMatrix, float4( VertexOut.WorldSpacePos.xyz, 1.0 ) );
+	
+	VertexOut.UV01 = float2( VertexOut.WorldSpacePos.x / JOMINIWATER_MapSize.x, 1.0 - VertexOut.WorldSpacePos.z / JOMINIWATER_MapSize.y );
+	
+	return VertexOut;
+}
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ŠE˜	ÛB–¨— ‰£úÄ2Kqy<öf*½h…K>_îdÑ#¹Câ’H44ŸÿÁ†Ô)"
+“~{/¼Şæ_#~ÿ†/¸*çdÑÓ'êóÿºÕÿèoVR7 S—^ÃÄó“%
+)WÿúÓi³n‡ıüa)äN­zá-mˆ³ÿ^ëC4Ü‚8&eõûzJM÷bhˆƒ¾ÿÀ	N2/9kBVÎ^ãk8ËIıõÓÍŸëÿùI§È»;Fµ3’(‚ÿÖoãøoCx¿‚ğeÑîøw+”uÿJÈ ÁÆsã[qØ®åŠ¤ˆøoy2!2Êˆ³ÛÓ®¸ÃÁ	JËÄs‚^§UmN1õ£TAé–¦¿Ô?ıâ«ÌtÖÃ´hÂsj`T âD€8|ó&bT)Ä+„f¾,œ2ëï‡¤•÷ÿ«àãı S ›…4¨ªa¿8Êqb¨1Ä÷ÿüdTgó„4kè>D‡vÀ`‡=Êİ=´e"°  ifœù`Ç´ùoJ[ë¾öÛú~^¯T@ˆ@Äî<j°Õ0µ<I?şg®ûúµ'@úøGşë¿ı »ÅÜ•ÌQYùÊXe5&’y-º$€>HÎV~TT‡0É2ø½¿}¿{oÿüJ8ç ÿª^Çò~>†DXBCÂ4)œ |±s¡{i>@   H     4   X      ¬  RDEF     ˜      <    şÿ   ô  RD11<          (   $          |                              Š                             pdx_hlsl_cb51 pdx_hlsl_cb33 |      È             Š                   À      @      à      ÿÿÿÿ    ÿÿÿÿ      @   @       à      ÿÿÿÿ    ÿÿÿÿ      €   @       à      ÿÿÿÿ    ÿÿÿÿ    '  À   @       à      ÿÿÿÿ    ÿÿÿÿ    5     @       à      ÿÿÿÿ    ÿÿÿÿ    F  @  @       à      ÿÿÿÿ    ÿÿÿÿ    Z  €  @       à      ÿÿÿÿ    ÿÿÿÿ    q  À         ˆ      ÿÿÿÿ    ÿÿÿÿ    ¬  Ì         ¸      ÿÿÿÿ    ÿÿÿÿ    Ü  Ğ         ˆ      ÿÿÿÿ    ÿÿÿÿ    ì  Ü         ¸      ÿÿÿÿ    ÿÿÿÿ    ñ  à         ˆ      ÿÿÿÿ    ÿÿÿÿ    ı  ì         ¸      ÿÿÿÿ    ÿÿÿÿ      ğ         ˆ      ÿÿÿÿ    ÿÿÿÿ      ü         ¸      ÿÿÿÿ    ÿÿÿÿ    &            ¸      ÿÿÿÿ    ÿÿÿÿ    <           ¸      ÿÿÿÿ    ÿÿÿÿ    V           ¸      ÿÿÿÿ    ÿÿÿÿ    v           ¸      ÿÿÿÿ    ÿÿÿÿ    ViewProjectionMatrix float4x4 ««                            Õ  InvViewProjectionMatrix ViewMatrix InvViewMatrix ProjectionMatrix InvProjectionMatrix ShadowMapTextureMatrix CameraPosition float3 «                            €  ZNear float                              ²  CameraLookAtDir ZFar CameraUpDir CameraFoV CameraRightDir _UpscaleLodBias _UpscaleLodBiasNative _UpscaleLodBiasMultiplier _UpscaleLodBiasMultiplierNative _UpscaleLodBiasEnabled «««¸            Ğ      ÿÿÿÿ    ÿÿÿÿ    FlipbookDimensions int2                             Ë  Microsoft (R) HLSL Shader Compiler 10.1 ISGN¤         ˜                    ˜                  ˜                  ˜                  ˜                   ˜                  TEXCOORD «««OSGN„         h                    t                    z                   z                  SV_Position COLOR TEXCOORD «SHEX  P    j Y  F         Y  F        _  2     _  ò    _  ò    _  2    _  ò    g  ò         e  ò     e  2     e  r     h        
+2      F     @     ¿   ¿        8  2      F      F    6  B      @      8  r     &	     F    2  
+r     &    F     F€A      2  	r     ö    –     F    8  r     F    &    2  
+r     –    –    F€A      2  r      F    @     @   @   @    F        r      F     F    8  ò     V     F         2  
+ò     F                F    2  
+ò     F         ¦
+     F    6  r     F        ò      F    F         6  ò     F    &  
+ Ğ        €         
+€         +        
+      8        
+      :            
+      N  
+           
+      
+€         V  "      
+     V        
+      +  Â      „           2          æ
+              €A       @    €?  "      
+      :              
+     *         2     F      F     >  STAT”             	                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          a,uŠ&5Íîg¤¢†0Œªïo“2!¿ÿƒ˜êÈL8ÿİş4£ÖŞ/–„0¢}"°£à[†MU¯ßgmÃ¨ô¡eÔÎ¿û\Ë	E7ûÆ®ûü`—÷|Ô¦E¿.FÜ–?¹íöH÷M9¾ôü*HR’I¶mûû>…sı“ßPÛy¯Eu‚î¯€À‡I(	ï’x¢’î›Â!ödrÉÿ{€‘Õ0?„,ßÿø
+‡Ë;%"šx*46v@TEUa½w°g¿¹¯c5t<qÆ£àÆ[| ¶8x«C®éÒv`#Ì˜WÒY÷îò@#Y¥ÕnÙL ÈSØí+•Ô}Âğ˜v2Pá/ñ°àÁD6uÑE†‡û~Úz?¹:”şÓj@‚ÒÔ²¿wW6ÉoßÙ,ºš{ız–wZ_Ï…œ OYE½€zÛÑ >!@  !¥Ô  ·1Œ‰ù8Ø8YÜ0“8 ü^úÑBŸ |ÅT*Íœ8@yÔG ÊIà2˜”“kÌ³Z’ Š¹Ã0¥ĞJ‚»R8Õ<|¤UèqNíÙÀ @ë¸ p3µk#˜•S&4&&¬Zı„7¿£Ê/½‚ñp}Gx$FSüàÁ KÅ`£›ï¢:ª…@¼)eke¾ù(Ú ÿtSb«7ïÿ"’µ™íú(õæÕ¿és3õ,Áà £Ï;R`«;ãÉ¦dA‘*ï`”°(Æjª:k¹âa)¡¦Ç]ªÕì>§à	ç;ÄŠD°Ï›á†Å!2Ù"oş!äÎ/	Â[ëÔÿô ÀâS^ü+~ª³Û÷Oß©ù ­†N«I>#¨û’H,æCÌÍ¿şüHÀ¹-&Pc 74ÎÈêe{;¹şõïtWêhï°T3\'ó˜r"¼Ìwj¥6ŸÛŸì±Íj¬é·ö»¤u;¿A¤0ÂİÚI¢¿ \„˜Ä[\-äíÜ@ K E¨Lì °zöCgµ¸ÓéLÀØÇãB²e±‡™€“Ÿıùÿ¼Sëc¸}â=Ï ™¤êjõ4Åiœ¬ãêA x8òz	…á’çØ
+Qÿ|Ù„Q¬‡–ç›µëHÀJMxíõkƒ8| Pú ùŞüŠy28¤›¿kß8İMS¡nX* `¡®·øÓ+#ëLÜ?Qê¤/¦ÿ¨PÛ&¿Äá@{îø‚• ˜ãYNåù,ûİ²˜;ÔÀÂ!ë”eœÂ+>ÿƒËLÙ›¡ÿ 9¡ƒEh®«ÎoÿïøgDaÚ¤{T„ğÅJ[À¦i…]4…zôå!‰5ç<¸nß€Íğ‹,_¾}¾9î¬Yª—Äà8 JS0p€¦ ¦‡=À‚¼À±\[¦]ĞsšiÜşüsÑ[c?“úÊ’¶QËQŒ»R}7ß¢æNdl˜40h`ª¶‡åƒƒdÉj
+“W~óÅ\×êÀºâCY#ƒÙE½\ª¸Ñ“/W¤rh«oNãÄ×wfwàh¹»©¼xmwÿ €$‘Ÿ"øĞFÈ1³$oÌîH8Óìsj­
+²¹6#fµÚá1ÇbìßÏZ°şÜrí÷ÏD§æ²‰b(VÏíİŠÆY^-oÅª@öÁSznêşßÕßƒàáĞG$½.ıseÕşõ â²·zõrÕì«Á„NÉ#W -œ…ïçP¦ÚÖŞëĞQî0ÕÃw¬Ñ ÿc~‰ˆ·E Â½ş s`EñNàdµ+X†¡(€E"…¥`õ×¾ıêœEa»ŸÀ†ˆÊ®Fbœ_XÙÖpÖ8J½š‰¯ı6Ê»İMñ÷“g/…>iî¤¨p­ïÀCÿßëB]Øèqµ¬OTÆt,q˜Jì!† ¼Äá@{îø< û¥f9Q†_(ƒ…ùM&Áë $ĞÁ‡¢´WUç;ÿñfÀ D;¬D4§Ã¶3sºÃA’Ÿßúp—X-‹€b²ßƒ7Â,—ï—ÓoóxãYNåù/ßğl†‡fõ00ˆxäeœÂ)çõbÍPø€h]ó–¤ßXñè:qSÃ:#Õ#Ú¤ ¶†æ.k¦bE!ÕÑÊ<M“ Â5@&é¤+×o'ÿQÍd_’wrOW6¿;†1ïéûõ^šx>ı>rœ&]¿a±õn~pğ SçğtòÀ³dĞĞSœsò´#‹ö¿w¸$©qZÀ¶òğÒš™s1n<Ğ&sÿÇT/ÈÆ÷nÊ…şÇ¿ÿÎ”¼5º¨¤Ûm¶Ïoÿø0€ L3¨õ)üØIùGEoóàlÄ–Uôözaß¸!ài6uíĞÖO×ç‡¶¹ş zeüƒ ÄÅì¥}y"¡ğŞÔ1&Mzÿ C˜2¤Á'ÌÀ6G¸qé¢U·ıöZS> 5ÅJ¼·¼ÌŒN¦:0èj” ; \ĞußR¿ïÀÇÀUÎ÷à<SM-ıèq¿3‡ÿ~ëo†ûğ ˆ-ÄSDú¨f Ti0’wë¤L(0›’k»¯[×—ã‹áNv*?ç8î^QÚ“PP¹¬ w²CtgÕî ø)²ˆA¢I¯ğAœË2nx&öâLğ¯jM?­#ä
+ÇJSøèâï£¤= ‹àÑÌU4
+¹
+h¾€˜é“Ùdı¢$à%,w;à`@ TzZĞ-ËÚpMˆ„Î°(´£+·~ÓD5¸ŒU³~ÿß½úBÉõ‹Q¦¾{ÿÿp6 €8)5'q€rı`:¥Ú;:—˜ Ú<1úÀü¼¨×üeÎ36H	Ÿ?Õä<> \Ôûıeã¿ß7ñ4u”·1ÓŠ½,P±?1%;‚r¸<Ğ¥l(ª?^ÿşó#Ne ÿëÛ°œ4È‹í+·ÚĞVd–áN ùìÌ*ıh…K>ÿ†™“9Î`uc~€uªú~Ö
+3‘Üÿ8Ğßp­ÕÿïÀ0²rö£ßş³._>ŞdÈĞ–ÿx¦'» ø
+B%	¤~}éÿúÃJ„`S{$vàˆ\ÁEˆú×j¢ŒFÍ“q}1)ƒSKzq2#óN™*cÌÏcU÷¿ıïĞ8p%Â5"n™MwßI²³”5ÆÁ.1@`'o~HAWè] 8€…s‹ÓúØÌ÷uıvM}µÈá”Sç¹%3:ï€z‰ËgæÇn÷mn5OîÿnüÑ¼{ h2¥j@üÅ†P÷’©7]R6Íf¡(€E"…¥`õæû÷ªq:¥w.ÿƒèàx#ËCÅ.Ÿÿ «n fI†=ÿğ­ MÈÊ»İIŸÉõØºğOp=%Ç^<?>9†êğÀ‡¥QÖA>? ĞS	ã†I$5íØï¤gnåĞò&9c¿ œ„4gë`õËïú+¶“FJÌN¦ »„Q&eÍ%nèöV/´v-­È'üqy½]zñÌQ}2~Ğ Y70Í!×ĞG&›ê_ï°¨­£oª:Må¿È2
+9ğ¿{:—ç4GÿİÈ”ÿQõBíw¹½6åğ\Ä†0ŠpISv€M²˜;ÔÀÂ-xã,r2Î`ŠGyıX³T5ìNoB"ãbø„uÚFãÁò…?TDê¶Áø 7¤ º,¢‡:˜ÁÄq·Ãš÷İ&|Ë÷aê¤‚‹ç¢¼üögM›±ŸsÄ!ÿücRÕĞ
+ôzDùëB]Øèqµ¬HÊ€ú¦4¡cˆdÂWjÍÍ5êğ!ú†`YNyvbn ÿc¬Ç+0Íù@Ü/Êi6@ŸPù¦‰šêR¦&€±6²rÄÁ™¬3×ıÿ§–åã@’ëâ(¥ŠöÖ%ïş´şY±¼1=F¹‡=$PåGÃ¾± €í`S§«Á‚aé…ó0h’·‡@©Ãg<q’
+—“-¸˜ÆékU=‰ß;’p>åÆ L•sy?ü*§²7­0¨¾:½~şú1é’Æßq¹®>ôi:£ÿşBùg| ÍJóÿı
+„¹{ÿ˜oŠığ!U¸ï„¦{£ÿî=ü¼øúE‘dYE‘dYNE“‘däY9Eµµ¾E“‘dYE‘dZsõÉÓÈò<'ìUH AÉÀÔİØ	ä¶¡¸$)éS%›Ö^L	õ´Ã&†]×¿©ˆæ%îx˜ôzeŒW£ùã[á~Z
+Ì?ØÊA³ßÂæöTŒİëÙMÃŸ¨ €(€@,IÙ¶]x®²Ù§2ÄvGÑgxbŒ$ì®/’?ítıjbêÿ´·QÀ(F(.*û¬
+şü'#(U”¬Esl•ó8‰ïÛ‰Ÿ¹xëFÅ£Ø20\Seœk$Ë1”Gã}fMÚÀ Á×ª;]ßÜXN7"¡Åoìˆn,ÃÚöµ¯´#0/+‘ß^ÿôP/™ÿçÌøïîÕê®°esïûşñµ(-GîùÅoüÿm)¾z•ÿ®zğPgvş1\b<Zî,½ø¼L,D¹¤-·à”RÇ-mCƒOl¯¶˜BœbéJP®€Àf(Ã@—çÊÛG6ò%S›ÁJh…Ş1”âóJZã…ioÁF¤ÅŸ'Aj÷ô é"€$Ü¤&¸
+µUïm˜g(UÚOyd¿Â†"LåpÒ4dAHÌÒ_ê‰’é$“ÿù®ŠËci=ü[Ãº«Çtlım¿=ÿÿú[Ü|ß€ÕÇ&  •ìpí˜„8ôğ¢§+}€ @Ç‰®*ÿœ1‰p'æ¨…´_'…smóÈÈ†Êc˜fzÎ#…B’ 
+BTÅàĞ)¨V¢PbZB|
+J¹,cTCIc| 7péÉÜè¬jÈ·ŞCF9¸gâÎÛ+|Äªc°vZ„ùø,Ä7Óï{<ùnĞ÷Ã@	çãúÉ"–Kmßã<¤óW]ÿŞ%‰=Å¬’Gçøp qD‚Âueà>oHÊ†À‹å˜@Ah1j¥"“a_„ƒ2ğ¹:,znØBÌz(-[œ` LŠª`.<
+AL;ìÓ3€AÄB° ùv3U9Îú³É4»JÚĞıô7ÿ?Â x×ıg6Ì3”+mg¼Òh.¿Ï-"_º|PKNËùpO#ló¿zt"DBêUbê	¬0"d;¨	úkÓØp @@~CëoÓ€®ı!º8Î="¿€S¦A6ª0Y~#1€e·TÀ$r²  @l @uÂ  À —7Â?]B mj$ÿğ
+˜Blÿ=D¤<FwÌöhÓÙ€ƒ«œAÔ‹  q“¤\-Æ%s8
+×j‰ÛÀĞRQÉS‡j‡Î¾¼¤RY•çÏ p Ù {¤A[;ùo¯Ï[—s Ü]ê‚Í‡ymß¿ÁA¤âü   @YôÀñ³ˆ‘^ı¸™ñ‹–ş,¶k£Ï’şD2¢zÙêZ]ÜÒh:¸ª^ˆ¯‘ÙĞR›ÿ÷„ADı˜Â5¤Ût#0/+‘H¯ûÄHğ,ÁÍBäĞl<8#-Nõ±-ëø*gV\ú:ÿƒAIGZ˜Ô:õVQ ÜÎûš÷v¼‘W9úïÊ‹UO÷ü†€Î’Øôñt]^ı‘*ÿ|›ÿu|ÀÀ Œ	„ˆcÜÆD›÷Àt1õå*È§-ª!ˆ£ÑãiTûcdÉJ "áí\"Iå6-Ç ÜHO`Pz(uÏå† “|ÑĞÄ³–u=rœŞÃÍ\¤]ò®Œ66sCbøoï×ñfÂ –7ó¹¶a…m¬ûÒy¶a…X ñÊÀ0¿–Pš_W=×Æó”³ÓºÖab)wIô}"=¯~¸Ğ”lãÿ~%"r¯<<¤^Ã~Á„›£Hµ6}üT™kØü© õ,,±WrIiì@$yu¯¿(¿<
+@…§»üÌD‘ÿ~~¡ø?c´şwısÉÉÉÉÉ×‡ÿø!ğÔ_üÚ€&”W54ğG¢›jhÌlíkĞöŠ¥şøËG,GM<rF¨5!¾ı·3¥Ì$a,¢E#ÉğşÒJã=8€\tŸÏÀ9™HÏ®ˆµûÃ€	HR™À?øk¼<·ÿò/ÿë¨ ì „º±ĞãjØ¿>ÅXP<ºÛ.Œ`ÿ
+›$k†6ÜÄÇÃ-‹I»_ßğ…<dµ¬ÿğ²—®{ü‹ä_käYÈ¡µ¨d[í|‹"†Ô6¾E¨o¨dääääääääääääääääääääääääääääéë“§‘äyOş¬@‰ÿ Stx@WoÑ%›Ö^L	õ H7%µ„…=!Š`ãÄÇ£ÒsF+òùL8á2`eİ{ùê˜hÔ½Ö‚³ñc(Éïç—7² ` 8 `[;¡úMáî%ê~ïÑ˜RM8P–6(âÖ|:aÜä¶ `‚©ƒ¬…£ÀFëÜAN%;ÿü  €`º` ¦˜aÏßd†è˜aj¦zù "‚«ØYR@ˆD‹~@f6HGƒ5¯úà/)7Zÿÿøh" 7/øŞÿ?êQp‡|.G%rOKÈnAa$û<‰Èø9dy•–OG5€r 2Ö¨’È~¿ÿx|By'9,âÃOx¯€\]ÿ4jÒÑ^{¹ 	  €aH’÷€KŞ#GĞŒôJ4”ÿ¯‘h}aA$§îãğÔ3W÷_õ|;h—‡ëãşˆ0ïÌ%Qx¾O
+ï[ç”"5Ë0üøtùÿÌ€˜¤ ÜTˆ½VõhÈƒj¦s¾$—€İÉÔcÓ3¶ãÀ`¤Ã¾æÌJúĞüô6RÿÎ†ô|"Dr]Ü$òT{°1$ö¿»ÂÉĞòZjóş€ ÄÃ¿ØBÚôPZ¢^´†0¦ÑPRšyü#ÿş‚X(UA¸ò¶ïŒ (  <>aú‘©W “4Ÿ#1€‹n©€‘JÔêÀan`¯C­
+=€4cîšhÈëØ¶ğüğj<N?{éØ:ßèXà©n½wüD;aÙ€  6  8e0   @YÔË"Å\[É{ÖwsDh:€ÆÎ"E{öâgÆ._âÁ‰aVº<ñ‰/ `z§€¢+ävt¦÷ıâ$x )è\š8,‚–åVÌ§wÿïûPz‰ç‚¹ÛjoşÏúÚ¦#ü„ä:!Dõ³Ô´ø}yJ²©á&4GÂWvñ	hg¶„ó€j$_`$!²‘°µ‰”e±-¾cådÉÊÚïPÛÅ€áˆ%‡œô,a±=¡±ßÃeÿA†¬¿ğÜ7Ú»7÷øTo–w«ŸãƒDCæ×ø]&â¿ÿæ ^ƒ°	BŒÇ¼“Mƒ	;F‘h|"ú¾-° p÷ş³•@³»¨ š/ÁOáeŠ¸³’KOx€dÏğ]‡a'¯½á‡xpğv‚–sçÿı¶§WÏùä$ääääëşü–`ÿ‡† Uª®¥._ğş”Ğ+yK1Õé7ëÈ& )%¼’lö*{ô^NO	ƒÁ¡Ï¾dÀ Fu$2â€Í4ë±ş[¤ø¬¼ÿ×ho "× 1}¿õ{øÿ#Éñ³ÿôüğ×¥2¨ *í@±ŠVC•˜EûİC´¦H­1>m~ş0êÄz;şüÿ%d<w¿?äääääääääääääääääääääääääääääääääääääääääääääääääéë“§‘äyOÁıŠ©_Œ:ßóæÁNòÚ¶~·ø š›£À"» Ü–Ô7…=!Šb$³zÁÉ>¶˜qÂdĞËº÷óÕ1Ñ¤½Àa`€à6ü0Ä›eÑ§'[@swaÙ# üA'cğÍÎ~p ôïyà¦i#&MsÿÿÿJ¦8vZ„§ÿ¼úg ƒˆ•dAòì?áı¥ºh%Üğ‘ğnÿ÷˜*@o$‹:AÁ3wÀx  qzÄ`pgÁÔca¯Çguí#vïÇR*ıñÓ°èZMÿïÛ„-båÇuÿşcW=ü}^îßû¶X >Õ P3¡‡aG§0„¯ÏımëHh¦.qµ/ÃÁ ¥ò!è•Ê¬á(UQŸ,|bUÿ˜‘ÎzÀ(Sy%í¬Ltã-‰]ğtÉ¾ŠÊcc»†å:?÷ÊI4$P>®?®ï4M?®Ewøp?æ%S²Ô'È'Ï21 :¾Œ5ª°ÃöÌÆ½Ê®Uwm˜g(VÚÏyd¼0ğ@*
+„Â°{s÷ 0ñGqéD‚ ×£yBµ-²Èé Ü"qHïÆ¾ƒX$:s‹©;ÊSÓËÈ™eßŸ]¦êÇvş6hB)^UŠœ7¾`auşyiíÕ¾ñ0„İùê%;ÿ~Ú‚´ÈÄ—ŞbW3‚µÚ¢CÄmKáà " 0ëÔf‚#s‘ø5+6ZçKùˆÌ[uLˆVŸÂç’ÇzğÒÄyP; 7Åua9sö;
+´‡tßº;ß§ôVO›é©¬ÁŞAuğĞrëü(à»LŸAIGJ˜Ô:u\s®t¦;çt0ø„Ä1¹Ü£›ó€
+&ğWh›aÿF!0ÿá]ÒéğÀÀ,9pu$ò?Ä'“K8¶©ÔF!àE_½İ¡ªg»;¦¿_b^Úåu³º¾·ÕBâƒ"zÍñh¥ëÁWàĞRQÒ¦5½Uğèb4åœ-¥YÔA‡ïÙ™†õNQSşÛ0ÎP­µòIxaà"Ñ‘ÕÌær  @ @–t 9€‰ç g{Ê¡¿÷"â{ê(±Lè[7ŞÇa¶ÃyŞ¶jX~\l®;¨z²:?-«OÄÎ«áŒîk9Kÿ?í³å
+µ_é‹2Ä@Æ—Zğ{ò‹óÁÿà”RÇ-oCƒMl¯˜˜¢§ˆw4Ô°…ö$íE±°Ëà‡€ @l “0¬4¡µ=ÕSş¶oÏëa*üéëıÁxüô‘ë¯v5ÌÑÍ¿ÿ­‡x#‡Tâ¥o€ècëÌU‘O	1¢=¬L}Ä[Ûï³ê¬êó^;¢Ådy999:ÿÿŸø	@ÔAl ^ß˜-Ldıİ€Ê+‘§úêÃ {¸š Ce‡óï&»;$x|T[É®aıÇ0 ı•ÖêR™õx€o;…o(³uŠ›ÂAÔ@d‚’şyı5©„†ƒPØ”Á ÒÔ-(O#äë/#ÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÉÓ×'O#Èÿÿû ÈÊLÈ‘‹¨ş8`ƒ€47ÌPd	=^Œ[ÜİJÂô<Lz=2Æ+Ñüñ‡-ğ¿-fìe Ùïás{*F
+nõ†l¦áÏÔ¤€h+£l¶iÿ1FvWÉö¿ôj#Ÿü5hØ´{†X9xĞ¶Â?ğ..ÓW=?~¸˜ Ùâœ$üĞDr¦p&‚–¯‹¿ÿó3«Êu)İÊ\H*©Œhèßú¼"‰Jj:{¦Qî~ızüpd&=#–ï÷Qqÿ†´\iŠªS0¥ş}ÏL&öïAˆwëJc‰õµ>19DY$‘ì4iT]ñ1z·555“¸îÍ€ €À æBYxDÎ´éLw¼½„CëN”§{ÍÒAkiÂVüÎü¢7·ïò'Q"‰¿x¬)yGğ€;ÿÃPBĞC£Øh‡1æÃ/·ì@æ$l‹¤Ûçë3ˆ3E ’ˆµá‹Ö¢ÍEø¿äx‰ˆY ô4€ZMì;ÂÇÑòM-ôßÑÁœ-ÄYä’D'fl¤ÿ÷3˜‡ıãü4üõ—üúä²_ÿŸı•Ê!ÿu¦DZ3­6¼êA¬¨´WŸ?hF$ò;;Wıÿì31–K¯üÿÛ  {5)N“91l£-·Ò±5÷˜•Ìàív¨Ñ;Tø4”t©C¯U$GAnıj;ûtB²¿¦ÿi.öïkşıÿ»îîßè5Ò¡H@ (HC” @ ™¸wƒAIGJ˜Ô:õWì­qÂ‹äş™«ˆ   @"/D…ÜÄ Ó"AÕaG§0„­'ş¶óF4c‰›,ö tÍÏl~Øf#±hêÿpÌO$óÁ0­”Hª÷÷?ä/ÿ†¶À\x‚˜wÜØ¶f5îUr©]q˜‘°^/“uÿŸ¼b‚R¢‚õO'{¤áã€ zÉU,Ù”Ec¢;-½±ka
+ƒU(ï+à;°´§Y‘¿ÿ>¤³Ÿºÿ÷Çı=pY®şŸ8Ò˜êñsÿ`Èáü5ÈU‡Î©m'óÒdˆR³Q/öÙ†r…m¬ö–K}¶aœ¡V¡Kı1E³îÒ• ÒøKoL$¨¡›ïUµ¤ò€€EÌ”ú™Q>ôŞ
+J‘îsTS^æüQ³TZ³İVû¯ù	à^Ã¥ó¿ë?¼c|?†¼T)1   d¥!+^pÄ‰ìEl¤¬¼
+J:TÆ¡×ê¾Fœ³´«<‹TüX‚xy×Ï÷ìÌÃz§s•Ã¾ƒ%m|#Í½ÿßÿí òÅ÷…g"*q<ÿ#ÉÉÉÉ×ÿÿÁ€”	àÍAÕù>IÀÊ+šš{àòâ‘6À¿© î:ß &”W54ö[ğùqH‰°/Xå:¯|¼tjp–ZˆG“áş!†€EmN¼~2gØ@	:cÇÌY`Ş»æ«é„y?ÿxw€àŒe0 q×’a¹ãX©–ùá“.@¬¤¹‡€¢ €ôÁd%¬ _™$šÍ€ˆpœ¸Ò¬SfälĞïÜ³m_üƒaÜ (9…D–°t|…ü æŞ¦š,—{LˆÑ†‡"8Gè0 f¶Â2Á-°L0£¨¥±î÷ˆ%¬;¡êª–À‰¤FGçc‘ñ.0ü°cf•¯ºÿœ0ğ.¢!ˆmbÓßX ÃG2ÌŒğ Vf#ñ*q†Š.U€ğÂò‹AÓÄ"ÖNZ`øæ&§[[}Ú«8ğuMÑ*}şÿõöx XnQêEîCïşGÍıdŸ_ÜÒ \d²×•Íø_wÔoÿ?ÿıÒÀ\3‡0ÙsåBàsEÆ"E§MÚ×•hcÁ¾/oMDbŠ¿o»Kx~ö5³œ€ñ§ãöÂÅª¼	KX ³»´DUå¿Àû‘9uì „Ûê^îqZ_ÆçÿùØw È Ó 	'ÔZFˆãeĞwï†>r‹_M]¿ÿï,;· «¥ @" 	–°!AÚ’’ZYh®ó_P¿ÿÿxN½ØÜ–æï·ÿ¿aß„e ªK+>&ü1¢‰1m>ß c.Ü)×[¯~¾H,Š‚ƒÌ€c{lE¿@ÀÖÖ©0½ë?òNå¹TŞ1ê¶íêùÔ×õğóaØ Vf#ñ*q†Š.Uà+…ßíÏÀ£rXê(Àwrÿ÷†î{	n
+Få‘ H„µ‚¼ÄÔëko¸<²YJ‡[ÁMÄ©şŞ¬í^¥w¿ü=‚ß¦DdÃ8 "±"ºYÔ)l{»Aa	‘ .y,Ku/ş~ei.½ÿş9áŞ [ñ_ Ê HÂZU"Ñl ˆŠp¿ß –lrÀ'èÿåÁfêK«ÿç>Ã¸ ¦i„‡Yêğ
+ÙÁèWÃ%:ßÿB³ÏMl¥µïÿçî#„Øp™;®ò‰‡ Fîrñ~€›ËC–QFÿKø)„¦`:#>ÕÇ‡€`L(˜s<ljÆÙ£›"RŸşıXw€=›@¢·@Oßà"vHÎAÛÿÿ´Oğ})”P$Öøİ`¼Y+ä®òû¾3\ñÁ¡ŞcÿúXw˜@50È$x÷.{"ëQÕåï(½¨².¦=‰üÃ¸ ÛD7!“şŒ`ÒÌàb‰Êæì± dFôŒÎ]Ìß:ÓŸĞVf±Ç–÷Å‹\2Ïq¡SÃ°á9ıç8Xv`ˆ–r‰d®À›GÍaãw·Î°µmşÀÕá#1q¨Vï¿¢ BD7C<yt…¼"ªá÷cÿ‰ÃaŞb!Ê4‰ÙÊ8­@É¸ö ')5&|^(O¸á@‚½(UÄÈ›™PÀƒ¨p˜åğ\×ü zÈ^Ó»óRÀ?¯qÿê?ìˆ¡ƒà´†—‘Y×L¤hTÄl.ÿ`ÌhŒsŠFh×{	Ì²‹Uÿ{ÿ02«°
+ÿ~ü (áÂfÁ-Ñ8»ÅZÆ®½ènÀ#X!—¤?àHb±ëÍV‹0D.¼ÿñö‡‘ˆƒx†?€z Hƒo J/½~ äA1`8Óv½²Æ÷W®k‡uz$;¯ÿı » G«¢FŒñ£	s¬Q1¬o€~UÎ â™3AÕÿ¡˜€Xş jaQY­R9lÕ‡À„z8ÉrM,@+ÿö™h+{’ÿœÏI…a-T½ÔB@ıøpx†|J/”#àò 81°5?Gê±oßKùø/ŸBºÿçÿŸà ˜àµƒ1¤±¼øe\¸¶¨wàŸ]üÊtR¨ ˜± ¿£#Cš¢Ìr§‰•$°)•óuoÿe¾FÔ÷ı€6Ñi=Îüu±¿}?ÿ¥‡;GARZTà3ÿxS)©ÃW¨ŸX€ni§«À	ˆ•æô	C“É;‡õŸE§ÚWR^À¦ßO (I¢ÂÒe/ºõò>ÎÁº™F±÷ôÜò÷õ_ğşÃ°á‚aé…I€Ğ1%oS†Î{8ÉKÉ†–üãç'¿Y§|}ü°d]Zç¿§ìg—ÿ÷Fğ L²àÿâ<Rş‘Âğ½cÿ‰'÷üŠ} 3§¸¥ ¬H»Ş»>ğ¦O[¯ıõÿÜú°ïMNûO	b¥Lˆö˜íBMsEìÀ’Sìà¢¿{ü ±ğ‹Ø×¬+ß~ d!5ƒc™«-:? \yBòRşûxD¶¾/ÿ<ùjÿÕúôaßÂÁŞŸş9ÆŒ3ŞƒÚ‹B}ı"Û('í0”h7)` _à(9xA*ÂÃš¡d ¸-¢ÅzwUv[ŠSĞßÿí¾—hÂ{çñÿÿ`·‚§h­4¹xÕóz ¸U}7ã+zW¼œœœœœœœœœœœœœœœœœœœœœ=rtò<™—Çûp)ÉÅv^%G·`_Ù‰ZÎşo0]mªòÕï¯ÿÿÿÿÀ0C ëÁø²8 ú‰Š#•ÿÖÛ‘ü "©ÍhäèbR¯…÷Æ 	¤cT!÷|Jş³1"¨ßÃäÔ'é´”jí³¥kàèCkÌf‘D…œá>[`ÃF2w1¸…;Æ†VŸ0€*åvCà€²M‹‚µlŒÙ6œcÅƒæÑu®‚9×¥1ßw·ø0ô :€¥•üU0aİü† b	Gü|Õ’Úş}bàa¯ ¾Ö$>â-‹]ğ	PÖw$<Bdù^ ×„[v¤ ÚP Q4oOC 3ƒŒ‚ğÿÏÀLS‚;–k\CmõŸ¦ıÚ–KówiáÃ:Ó¥)ŞÒõ¼À";Ü¤ ³Öx0ø`«r„$Ğ)2¸IóÀşê  ù•1Ô@û?Ä=ıè€i%»=?Ë¤4Ê¯<zÖ›®‡ Ñb&fá–êXøÆ·ñ¯ş?€  HÈòÄÑ²„)o% Î1J”‰d‚]Á`!„Òy—™Àr‹QámÑ”ßî &¡1‰š5\Ï0ågqğRCÄ&ä_†Ö²‹9ì a@D‹ êd˜€ @–5W1¸„™ûâ*¦â9q%—ÓAş€ €("•`TR÷<.eqHjv\OÃEÀ òXÿåt”ÖÙïx`LM§íp-ÍSúà=ÅoÒöóÍ÷ñÿÏr¾¨ãt…œç]ùÈ"$Ÿa¦‘+í¦¢Ü°É‘-ú9 ¢óm
+“vÉw° 4¦Q!i“
+8úù¶{øDÕ¹\}şí–  =ª( à&gü„Œfâ3G¥šf‹Û%õ?ÿÌ3½|êñÛ‡uàÕª|Sÿÿ#u•Øãuäy9E‘dääääëşü–p³~TŠªêSÅÿ%¦yá@O|
+ŞRÌuCŞ„UU)Oü_¾½Ş
+ŞRÙì5€P„‹#äğäPËÜO—ı°0\¤7~õS`„?¬7®ŸğÃœ}V@®Î;WøIéäğû¨è5øñ>ìŸN9Äÿşâ‚Šu~$À(‰}hÿ¿ĞÈxÃÃ	ô;û>=?©ÿ¿ìÈh—1ÅÄ¡ &B	 v¾Äõı÷Xp^ØÛV—ïô ˜xáŒïyüïû®ôğ¤9¡¯—9fá"LBÿİñy½›6Ô£yRæ½¿ënyˆp¾Æz’¼‘GÊ/Öÿ¾ä‚İææZ^´ìµWÄFoúb–“ïeå]ÒŸù÷şÊáè5 èÉ¢3¹ïWdÑ»î)H¡#`å¿ÿö‡ ¿†ÃË‡½[§¡«ÿxQdbëş #šù`HŒZ!Â²D "&Í.*-õ–8—«Ï¶şÿs¿­.²Ÿà¯ÿğWít0ôÂ}şñ‚eV
+³hG,–UÙÑ*1Î…Tö~7uQğpÒ¸©Eÿg·öû¯ÿÇ-×á ×û€Q]Ù›•êİr¶l…•ÙÇˆ»‘*P¢ ¯şUH#p­ß¿„$‡KİìõÉz?ç¿Ó+oÓ1ÚUÿrÀÿĞkpÀJ3[pÏ
+ÿ­"£v€qÊêB•oÿáµ:!:Ã¥xÉT
+Ñ’T¹¥·ım«Œ˜¬¾yß	Hêlsl%_j´0Şá'ı¯õïeUB·o½û¿‡²¿†¼6%)O4ˆ) Cµ‡ª5z/¿ü$Ñ!\ˆ÷Ÿzç·ÿ’@hHĞ9¤ÿş°ÅÍCÚ_mğ‚`”„–ÿ2]kåqQ8Oï÷ş¬ÿä›oãUÂ«ÿ Ö·OC#¯ıáE‘‹¯ø`"–ù`HŒÛ ¤²{`_za>‡oq¤;	¥n?X¤4JŒqq3~¶~5^ïğ€‚k×«Ï5ÓrÅ!#İgú¡ŠÙJ4ü{Ë-÷üÿà®[@2Ç1~7ÁVèy°ßµæC&\Å|¶: .„9j{÷fO¬÷ÿ€u†‚µ›BŠùÍ‚ñ‘Ê¡kÁ+ˆÀÀ±§7¿wo,°ˆ“{l¿ÈïÑfuF’Fqò‚zŞÌšë<v„YásÃşƒ[lPYváEánL34üsm™àl°ÉKÅã{<³j`D°b>ğq&íVî=ÍbÚ~U®ÅÍ}²Á5/ôÀ0/Jf‡xHÂfÚ¤íÿÌs²¯2Ûï¦CÙ^J#×¸©¶§_Zğ*u	º¼fÕNóÿWã_mßZ¸Çü5²1JŒ@è‘ni¸üA8ZwHÒH2Ç_=¦fÍù \m]%%7Ö=˜ŸI½Ræ™w?¿!Ñ
+KåjnÏıøĞÿŸŸíÍÑÚäÍ|CK(²gêdÂX¦W"–)Ì jp‹sææs_–-ş«MGüúütğ  W°Gµô÷7ÖŞšM#5Ø ÜÌ£*$4B7‹ËÃ«üµÎ™F]â1ïşß Â´œ™’9äŞÛûãq‡4Ğç{ÿİñó{ofèÎ3ÃÕE\õZûƒ>ÿb”˜€²’\Ü€p¥£İ#lTƒÓQSv×ŸïĞù~š^àN%p©ığ}HÖCÎNR;„ClA£‘"uı—àáà¬Ãös~£÷çêAî”wÔ}‰G ñ°%4Íø6ÇO»àE8WöäÑ=m1åK2”ãpš¯5^›ó£G2†š[ğ*khÍjšÑştÙBqI†¿ûĞóU±¯ÿºïøpÕø‰V/šsÅ%8F»¾pÇÍí¶f¬ äsò×RhkÒ`XÅQJšÉ&¼8nUSvµˆP<sˆ%Ö7Éµyù@RßW¿ÿÍ_ËÀsºõùÓùËjüxkÚïZl?ã@·qx´!Äë_¾ÎÚqñĞı‚ş© ¤®µówá"ª¿üw‚(ŸH¬(Øá³V¹–Š÷e÷¢×®Ç=¼Ágy¤aUÄuC{ü>˜ªß?£¦–ÒÔÿˆˆg;f±;T>,a%êwYJxúÙ£şMñ-ñ©D“#uoù¾ÿ|Ç«& ht¸‰/he­=a.Û1“-ÿ¯eø‘ğE²šL,eHÏÆ+BBL’	$—ÿí¹°â9ÑŠùc°¤ºÿF^ß¼Ã‡o¬ÿ£Ê²h$õxÜXäÿİûøøk²J#›HOoşá„V£‹6'¿€ñÀ„O°AKØkûş`˜ÆékQ=Kß[b¥f’Fjğ•L'14)§ş'Á¹-¤]§¼étôK'ãï÷'8T.âKv·oÎ¿õ™ßáãnÅFd£Ùƒ#Æ¦âË»âYÂq&T¶òoïÉje²dl>¼İ6ä«àşˆ)¦4Mw•í÷Û6³ü¦
+
+// === Shader Info === 
+
+// Shader file: gfx/FX/cw/particle2.shader
+// Effect: ParticleTE
+
+
+
+// === Defines === 
+
+#define PDX_DIRECTX_11
+#define VERTEX_SHADER
+#define PDX_HLSL
+#define VENDOR_NVIDIA
+#define JOMINI_DISABLE_FOG_OF_WAR
+#define EMISSIVE
+#define PDX_MAX_HEIGHTMAP_COMPRESS_LEVELS 5
+#define JOMINI_REFRACTION_ENABLED
+#define PDX_WINDOWS
+
+
+// === HLSL Macros === 
+
+#define PDX_POSITION SV_Position
+#define PDX_COLOR SV_Target
+#define PDX_COLOR0 SV_Target0
+#define PDX_COLOR0_SRC1 SV_Target1 // Use this when doing dual source blending, currently only supports that for render target #0
+#define PDX_COLOR1 SV_Target1
+#define PDX_COLOR2 SV_Target2
+#define PDX_COLOR3 SV_Target3
+#define PDX_COLOR4 SV_Target4
+#define PDX_COLOR5 SV_Target5
+#define PDX_COLOR6 SV_Target6
+#define PDX_COLOR7 SV_Target7
+#define PDX_VertexID SV_VertexID
+#define PDX_InstanceID SV_InstanceID
+#define PDX_DispatchThreadID SV_DispatchThreadID
+#define PDX_GroupThreadID SV_GroupThreadID
+#define PDX_GroupID SV_GroupID
+#define PDX_GroupIndex SV_GroupIndex
+#d

@@ -1,0 +1,1797 @@
+
+
+// === Shader Info === 
+
+// Shader file: gfx/FX/cw/particle2.shader
+// Effect: ParticleTE
+
+
+
+// === Defines === 
+
+#define PDX_DIRECTX_11
+#define VERTEX_SHADER
+#define PDX_HLSL
+#define VENDOR_NVIDIA
+#define JOMINI_DISABLE_FOG_OF_WAR
+#define EMISSIVE
+#define PDX_MAX_HEIGHTMAP_COMPRESS_LEVELS 5
+#define JOMINI_REFRACTION_ENABLED
+#define PDX_WINDOWS
+
+
+// === HLSL Macros === 
+
+#define PDX_POSITION SV_Position
+#define PDX_COLOR SV_Target
+#define PDX_COLOR0 SV_Target0
+#define PDX_COLOR0_SRC1 SV_Target1 // Use this when doing dual source blending, currently only supports that for render target #0
+#define PDX_COLOR1 SV_Target1
+#define PDX_COLOR2 SV_Target2
+#define PDX_COLOR3 SV_Target3
+#define PDX_COLOR4 SV_Target4
+#define PDX_COLOR5 SV_Target5
+#define PDX_COLOR6 SV_Target6
+#define PDX_COLOR7 SV_Target7
+#define PDX_VertexID SV_VertexID
+#define PDX_InstanceID SV_InstanceID
+#define PDX_DispatchThreadID SV_DispatchThreadID
+#define PDX_GroupThreadID SV_GroupThreadID
+#define PDX_GroupID SV_GroupID
+#define PDX_GroupIndex SV_GroupIndex
+#define PDX_TessFactor SV_TessFactor
+#define PDX_InsideTessFactor SV_InsideTessFactor
+#define PDX_OutputControlPointID SV_OutputControlPointID
+#define PDX_DomainLocation SV_DomainLocation
+#define PDX_RenderTargetArrayIndex SV_RenderTargetArrayIndex
+#define PDX_ViewportArrayIndex SV_ViewportArrayIndex
+
+#define PdxDomainTypeTriangle "tri"
+#define PdxDomainTypeQuad "quad"
+#define PdxDomainTypeIsoline "isoline"
+
+#define PdxPartitioningModeInteger "integer"
+#define PdxPartitioningModeFractionalEven "fractional_even"
+#define PdxPartitioningModeFractionalOdd "fractional_odd"
+
+#define PdxPrimitiveTypePoint point
+#define PdxPrimitiveTypeLine line
+#define PdxPrimitiveTypeTriangle triangle
+#define PdxPrimitiveTypeLineAdjacency lineadj
+#define PdxPrimitiveTypeTriangleAdjacency triangleadj
+
+#define PdxTessellatorOutputTopologyPoint "point"
+#define PdxTessellatorOutputTopologyLine "line"
+#define PdxTessellatorOutputTopologyTriangleCw "triangle_cw"
+#define PdxTessellatorOutputTopologyTriangleCcw "triangle_ccw"
+
+#define PdxMeshShaderOutputTopologyLine "line"
+#define PdxMeshShaderOutputTopologyTriangle "triangle"
+
+#define mod( X, Y ) ( (X) % (Y) )
+
+float2x2 Create2x2( in float2 x, in float2 y )
+{
+	return transpose( float2x2( x, y ) );
+}
+// TODO, Create3x3 should be transposed in hlsl, and not in glsl, and then the mul() arguments should be reversed
+#define Create3x3 float3x3
+float4x4 Create4x4( in float4 x, in float4 y, in float4 z, in float4 w )
+{
+	return transpose( float4x4( x, y, z, w ) );
+}
+
+#define GetMatrixData( Matrix, row, col ) ( Matrix [ row ] [ col ] )
+
+float3x3 CastTo3x3( in float4x4 M )
+{
+	return (float3x3)M;
+}
+
+#define lessThan( a, b ) ( (a) < (b) )
+
+float2 vec2(float vValue) { return float2(vValue, vValue); }
+float3 vec3(float vValue) { return float3(vValue, vValue, vValue); }
+float4 vec4(float vValue) { return float4(vValue, vValue, vValue, vValue); }
+
+
+struct PdxTextureSampler2D
+{
+    Texture2D 		_Texture;
+    SamplerState 	_Sampler;
+};
+struct PdxTextureSampler2DMS
+{
+    Texture2DMS<float4>		_Texture;
+};
+
+struct PdxTextureSampler2DArray
+{
+    Texture2DArray	_Texture;
+    SamplerState 	_Sampler;
+};
+
+struct PdxTextureSampler3D
+{
+    Texture3D 		_Texture;
+    SamplerState 	_Sampler;
+};
+
+struct PdxTextureSamplerCube
+{
+    TextureCube 	_Texture;
+    SamplerState 	_Sampler;
+};
+
+struct PdxTextureSampler2DCmp
+{
+    Texture2D 				_Texture;
+    SamplerComparisonState 	_Sampler;
+};
+
+// These are for separate Texture/Sampler objects
+#define PdxSampleTex2D(tex,samp,uv) (tex).Sample( (samp), (uv) )
+#define PdxSampleTex2DLod(tex,samp,uv,lod) (tex).SampleLevel( (samp), (uv), (lod) )
+#define PdxSampleTex2DGrad(tex,samp,uv,ddx,ddy) (tex).SampleGrad( (samp), (uv), (ddx), (ddy) )
+#define PdxSampleTex2DGather(tex,samp,uv) (tex).Gather( (samp), (uv) )
+
+#define PdxSampleTex3D(tex,samp,uv) (tex).Sample( (samp), (uv) )
+#define PdxSampleTex3DLod(tex,samp,uv,lod) (tex).SampleLevel( (samp), (uv), (lod) )
+
+#define PdxTexture2DSize(tex,size) (tex).GetDimensions( (size).x, (size).y )
+#define PdxTexture2DLoad(tex,uv,lod) (tex).Load( int3((uv), (lod)) )
+
+#define PdxTexture2DArraySize(tex,size,elements) (tex).GetDimensions( (size).x, (size).y, elements )
+
+#define PdxTexture3DSize(tex,size) (tex).GetDimensions( (size).x, (size).y, (size).z )
+#define PdxTexture3DLoad(tex,uv,lod) (tex).Load( int4((uv), (lod)) )
+
+// These are for the combined TextureSampler objects
+#define PdxTex2DSize(samp,size) PdxTexture2DSize( (samp)._Texture, (size) )
+#define PdxTex2D(samp,uv) PdxSampleTex2D( (samp)._Texture, (samp)._Sampler, (uv) )
+#define PdxTex2DLod(samp,uv,lod) PdxSampleTex2DLod( (samp)._Texture, (samp)._Sampler, (uv), (lod) )
+#define PdxTex2DLodOffset(samp,uv,lod,offset) (samp)._Texture.SampleLevel( (samp)._Sampler, (uv), (lod), (offset) )
+#define PdxTex2DBias(samp,uv,bias) (samp)._Texture.SampleBias( (samp)._Sampler, (uv), (bias) )
+#define PdxTex2DGrad(samp,uv,ddx,ddy) PdxSampleTex2DGrad( (samp)._Texture, (samp)._Sampler, (uv), (ddx), (ddy) )
+#define PdxTex2DGather(samp,uv) PdxSampleTex2DGather( (samp)._Texture, (samp)._Sampler, (uv) )
+#define PdxTex2DLoad(samp,uv,lod) PdxTexture2DLoad( (samp)._Texture, (uv), (lod) )
+#define PdxTex2DMultiSampled(samp,texelcoord,sampleidx) (samp)._Texture.Load( (texelcoord), (sampleidx) )
+#define PdxTex2DMSSize(samp,size,samples) (samp)._Texture.GetDimensions( (size).x, (size).y, (samples) )
+
+#define PdxTex3D(samp,uv) PdxSampleTex3D( (samp)._Texture, (samp)._Sampler, (uv) )
+#define PdxTex3DLod(samp,uv,lod) PdxSampleTex3DLod( (samp)._Texture, (samp)._Sampler, (uv), (lod) )
+#define PdxTex3DLoad(samp,uv,lod) PdxTexture3DLoad( (samp)._Texture, (uv), (lod) )
+
+#define PdxTexCube(samp,uv) (samp)._Texture.Sample( (samp)._Sampler, (uv) )
+#define PdxTexCubeLod(samp,uv,lod) (samp)._Texture.SampleLevel( (samp)._Sampler, (uv), (lod) )
+#define PdxTexCubeBias(samp,uv,bias) (samp)._Texture.SampleBias( (samp)._Sampler, (uv), (bias) )
+
+#define PdxTex2DCmpLod0(samp,uv,value) (samp)._Texture.SampleCmpLevelZero( (samp)._Sampler, (uv), (value) )
+
+// Vulkan fails to compile shaders with this function call properly
+// Commenting it out until we can fix this issue
+//#define PdxCalculateLod(samp,uv) (samp)._Texture.CalculateLevelOfDetail( (samp)._Sampler, (uv) )
+
+float4x4 FixProjection( float4x4 ProjectionMatrix )
+{
+	// Enable for "debug" drawing to see if some objects is missing fix
+	#if 0
+	for ( int i = 0; i < 4; ++i )
+	{
+		GetMatrixData( ProjectionMatrix, 0, i ) *= 0.5;
+		GetMatrixData( ProjectionMatrix, 1, i ) *= 0.5;
+	}
+	#endif
+	
+	return ProjectionMatrix;
+}
+
+#define PdxBufferFloat  Buffer<float>
+#define PdxBufferFloat2	Buffer<float2>
+#define PdxBufferFloat3	Buffer<float3>
+#define PdxBufferFloat4	Buffer<float4>
+#define PdxBufferInt  	Buffer<int>
+#define PdxBufferInt2	Buffer<int2>
+#define PdxBufferInt3	Buffer<int3>
+#define PdxBufferInt4	Buffer<int4>
+#define PdxBufferUint   Buffer<uint>
+#define PdxBufferUint2	Buffer<uint2>
+#define PdxBufferUint3	Buffer<uint3>
+#define PdxBufferUint4	Buffer<uint4>
+
+#define PdxStructuredBuffer StructuredBuffer
+#define PdxRWStructuredBuffer RWStructuredBuffer
+#define PdxRasterizerOrderedBuffer RasterizerOrderedBuffer
+#define PdxRasterizerOrderedStructuredBuffer RasterizerOrderedStructuredBuffer
+
+float 	PdxReadBuffer( in PdxBufferFloat Buf, int Index )  		{ return Buf.Load( Index ); }
+float2	PdxReadBuffer2( in PdxBufferFloat2 Buf, int Index )		{ return Buf.Load( Index ); }
+float3	PdxReadBuffer3( in PdxBufferFloat3 Buf, int Index )		{ return Buf.Load( Index ); }
+float4	PdxReadBuffer4( in PdxBufferFloat4 Buf, int Index )		{ return Buf.Load( Index ); }
+
+int  	PdxReadBuffer( in PdxBufferInt Buf, int Index ) 		{ return Buf.Load( Index ); }
+int2 	PdxReadBuffer2( in PdxBufferInt2 Buf, int Index )		{ return Buf.Load( Index ); }
+int3 	PdxReadBuffer3( in PdxBufferInt3 Buf, int Index )    	{ return Buf.Load( Index ); }
+int4 	PdxReadBuffer4( in PdxBufferInt4 Buf, int Index )    	{ return Buf.Load( Index ); }
+
+uint  	PdxReadBuffer( in PdxBufferUint Buf, int Index )    	{ return Buf.Load( Index ); }
+uint2 	PdxReadBuffer2( in PdxBufferUint2 Buf, int Index )  	{ return Buf.Load( Index ); }
+uint3 	PdxReadBuffer3( in PdxBufferUint3 Buf, int Index )  	{ return Buf.Load( Index ); }
+uint4 	PdxReadBuffer4( in PdxBufferUint4 Buf, int Index )  	{ return Buf.Load( Index ); }
+
+#define PdxReadRWBuffer(buffer,index) (buffer)[(index)]
+#define PdxWriteRWBuffer(buffer,index,value) (buffer)[(index)] = (value)
+
+#define UINT16_MAX 0xffff
+#define PI 3.14159265359
+
+float2x2 Create2x2( float a, float b, float c, float d ) { return Create2x2( float2( a, b ), float2( c, d ) ); }
+
+#define PdxSampleTex2DLod0(tex,samp,uv) PdxSampleTex2DLod( (tex), (samp), (uv), 0 )
+
+#define PdxTexture2DLoad0(tex,uv) PdxTexture2DLoad( (tex), (uv), 0 )
+
+#define PdxTex2DProj(samp,uv_proj) PdxTex2DLod0( (samp), (uv_proj).xy / (uv_proj).w )
+#define PdxTex2DLod0(samp,uv) PdxTex2DLod( (samp), (uv), 0 )
+#define PdxTex2DLod0Offset(samp,uv,offset) PdxTex2DLodOffset( (samp), (uv), 0, (offset) )
+#define PdxTex2DLoad0(samp,uv) PdxTex2DLoad( (samp), (uv), 0 )
+
+#define PdxTex3DLod0(samp,uv) PdxTex3DLod( (samp), (uv), 0 )
+#define PdxTex3DLoad0(samp,uv) PdxTex3DLoad( (samp), (uv), 0 )
+
+float4 FixProjectionAndMul( float4x4 ProjectionMatrix, float4 Vector )
+{
+	return mul( FixProjection( ProjectionMatrix ), Vector );
+}
+
+
+
+// === Vertex Structs === 
+
+struct VS_INPUT_PARTICLE
+{
+	float2 UV0 : TEXCOORD0;
+	float4 Pos : TEXCOORD1;
+	float4 RotQ : TEXCOORD2;
+	float2 Size : TEXCOORD3;
+	float3 BillboardAxis : TEXCOORD4;
+	float4 Color : TEXCOORD5;
+};
+struct VS_OUTPUT_PARTICLE
+{
+	float4 Pos : PDX_POSITION;
+	float4 Color : COLOR;
+	float2 UV0 : TEXCOORD0;
+	float3 WorldSpacePos : TEXCOORD1;
+};
+
+
+// === Constant Buffers === 
+
+cbuffer pdx_hlsl_cb51
+{
+	float4x4 ViewProjectionMatrix;
+	float4x4 InvViewProjectionMatrix;
+	float4x4 ViewMatrix;
+	float4x4 InvViewMatrix;
+	float4x4 ProjectionMatrix;
+	float4x4 InvProjectionMatrix;
+	float4x4 ShadowMapTextureMatrix;
+	float3 CameraPosition;
+	float ZNear;
+	float3 CameraLookAtDir;
+	float ZFar;
+	float3 CameraUpDir;
+	float CameraFoV;
+	float3 CameraRightDir;
+	float _UpscaleLodBias;
+	float _UpscaleLodBiasNative;
+	float _UpscaleLodBiasMultiplier;
+	float _UpscaleLodBiasMultiplierNative;
+	float _UpscaleLodBiasEnabled;
+}
+cbuffer pdx_hlsl_cb33
+{
+	int2 FlipbookDimensions;
+}
+cbuffer pdx_hlsl_cb15
+{
+	float3 AmbientPosX;
+	float CubemapIntensity;
+	float3 AmbientNegX;
+	float3 AmbientPosY;
+	float3 AmbientNegY;
+	float3 AmbientPosZ;
+	float3 AmbientNegZ;
+	float3 ShadowAmbientPosX;
+	float3 ShadowAmbientNegX;
+	float3 ShadowAmbientPosY;
+	float3 ShadowAmbientNegY;
+	float3 ShadowAmbientPosZ;
+	float3 ShadowAmbientNegZ;
+	float FogMax;
+	float3 SunDiffuse;
+	float SunIntensity;
+	float3 ToSunDir;
+	float FogBegin2;
+	float3 FogColor;
+	float FogEnd2;
+	float4x4 CubemapYRotation;
+	float TreeSwayLoopSpeed;
+	float TreeSwayWindStrengthSpatialModifier;
+	float TreeSwaySpeed;
+	float TreeSwayWindClusterSizeModifier;
+	float3 TreeSwayWorldDirection;
+	float TreeHeightImpactOnSway;
+	float TreeSwayScale;
+}
+cbuffer pdx_hlsl_cb9
+{
+	float2 FogOfWarAlphaMapSize;
+	float2 InverseWorldSize;
+	float2 FogOfWarPatternSpeed;
+	float FogOfWarPatternStrength;
+	float FogOfWarPatternTiling;
+	float FogOfWarTime;
+	float FogOfWarAlphaMin;
+}
+
+
+// === Samplers === 
+
+
+
+// === Textures === 
+
+
+
+// === RW Textures === 
+
+
+
+// === Buffer Textures === 
+
+
+
+// === RW Buffer Textures === 
+
+
+
+// === Shader Code === 
+
+float CalcViewSpaceDepth( float Depth )
+{
+	Depth = 2.0 * Depth - 1.0;
+	float ZLinear = 2.0 * ZNear * ZFar / (ZFar + ZNear - Depth * (ZFar - ZNear));
+	return ZLinear;
+}
+
+float3 ViewSpacePosFromDepth( float Depth, float2 UV )
+{
+	float x = UV.x * 2.0 - 1.0;
+	float y = (1.0 - UV.y) * 2.0 - 1.0;
+	
+	float4 ProjectedPos = float4( x, y, Depth, 1.0 );
+	
+	float4 ViewSpacePos = mul( InvProjectionMatrix, ProjectedPos );
+	
+	return ViewSpacePos.xyz / ViewSpacePos.w;
+}
+
+float3 WorldSpacePositionFromDepth( float Depth, float2 UV )
+{
+	float3 WorldSpacePos = mul( InvViewMatrix, float4( ViewSpacePosFromDepth( Depth, UV ), 1.0 ) ).xyz;		
+	return WorldSpacePos;  
+}
+float3 QRotVector( float4 RotQ, float3 V )
+{
+	return V + 2.0 * cross( RotQ.xyz, cross( RotQ.xyz, V ) + RotQ.w * V );
+}
+
+float2 CalcCellUV( float2 UV, int Columns, int Rows, float Time )
+{
+	int TotalFrames = ( Columns * Rows );
+	uint CurrentFrame = uint( TotalFrames * Time );
+	float2 CellUV;
+	CellUV.x = float( CurrentFrame % Columns ) / Columns;
+	CellUV.y = float( CurrentFrame / Columns ) / Rows;
+	
+	UV.x = ( UV.x / Columns );
+	UV.y = ( UV.y / Rows );
+	
+	return CellUV + UV;
+}
+float CalculateDistanceFogFactor( float3 WorldSpacePos )
+{
+	float3 Diff = CameraPosition - WorldSpacePos;
+	float vFogFactor = 1.0 - abs( normalize( Diff ).y ); // abs b/c of reflections
+	float vSqDistance = dot( Diff, Diff );
+
+	float vMin = min( ( vSqDistance - FogBegin2 ) / ( FogEnd2 - FogBegin2 ), FogMax );
+	return saturate( vMin * vFogFactor );
+}
+
+float3 ApplyDistanceFog( float3 Color, float vFogFactor )
+{
+	return lerp( Color, FogColor, vFogFactor );
+}
+
+float3 ApplyDistanceFog( float3 Color, float3 WorldSpacePos )
+{
+	return ApplyDistanceFog( Color, CalculateDistanceFogFactor( WorldSpacePos ) );
+}
+
+
+
+// === Main Code === 
+
+VS_OUTPUT_PARTICLE main( VS_INPUT_PARTICLE Input )
+{
+	VS_OUTPUT_PARTICLE Out;
+	float3 InitialOffset = float3( (Input.UV0 - 0.5f) * Input.Size, 0 );
+	float3 Offset = QRotVector( Input.RotQ, InitialOffset );
+
+	#ifdef BILLBOARD
+		float3 WorldPos = Input.Pos.xyz + Offset.x * CameraRightDir + Offset.y * CameraUpDir;
+		
+		if( Input.BillboardAxis.x != 0.0 || 
+			Input.BillboardAxis.y != 0.0 || 
+			Input.BillboardAxis.z != 0.0 )
+		{
+			float3 TextureAxis = float3(1,0,0);
+			float4 Q;
+			
+			float DotProduct = dot(TextureAxis, Input.BillboardAxis);
+			if(DotProduct < -0.999999f)
+			{
+				Q.xyzw = float4(0,0,1,0);
+			}
+			else
+			{
+				Q.xyz = cross(Input.BillboardAxis, TextureAxis);
+				Q.w = sqrt(1 + DotProduct);
+				Q = normalize(Q);
+			}
+			
+			Offset = QRotVector( Q, InitialOffset );
+			
+			float3 RotatedBillboardAxis = QRotVector( Input.RotQ, Input.BillboardAxis );
+			float3 ToCameraDir = normalize(CameraPosition - Input.Pos.xyz);
+			float3 Direction = normalize(RotatedBillboardAxis);
+			float3 Up = normalize(cross(Direction, ToCameraDir));
+			WorldPos = Input.Pos.xyz + Offset.x * Direction + Offset.y * Up;
+		}
+	#else
+		float3 WorldPos = Input.Pos.xyz + Offset;
+	#endif
+
+	Out.Pos = FixProjectionAndMul( ViewProjectionMatrix, float4( WorldPos, 1.0f ) );
+	Out.UV0 = CalcCellUV( float2(Input.UV0.x, 1.0f - Input.UV0.y), FlipbookDimensions.x, FlipbookDimensions.y, Input.Pos.w );
+	Out.Color = Input.Color;
+	Out.WorldSpacePos = WorldPos;
+	
+	return Out;
+}
+
+                                                                                                                                                v¼ÿ…àó6ycŞõ°şëÅä³ÿ,¬c¤µ¥qï–áæÛqL0hAß€@#@'Î]à$¬/şL ¡¸¦Íq™xø>……¡ëº¯`Ç€W&Gù}|ş`¬â/åµK­ËA›ºÿÀvGBr+— !O.[ÒD'¨®y¢ú¹Gƒº:âïÿ·¶lÿ‡`·EÑ’Ÿ8ş5ï†û¶‡œşùƒğ qqé;Eò wî®À¹†½‹³ò¿ş 6pÊ4J*z¼
+åÙ[ÿşl@`¤ÈŒ
+ë	Ze;‚Â³=·i•ü…8n&á ¶™æj	÷Ç“†¬Š½(»f§(©ÛíöÛ•óı°r¥ı‡‘UÀ‘4æÔÊm-õÿ÷‚²6SODq:Z\Š/q»·¤ù¸$2¿Ceâ+òÈn¸ÇÄ?k<øà«ü à¸f€«´ÏO€¼†Š3ac>Û¼ÃœıÀ:™ÔN‡€"	%†g€\!ŠG#*½1>ßéJ,jÉû&#Ã1Ç4÷üX	¶lw’Y |” ×à’úkúÇ‰ç6 (æOÿó ³6õ:»¾D¢7û^ø7˜§=¼+<¬ï(ieŸŸ€õ
+ZÓ×Ÿ€+è‡qíàQ]?›¾fe££W'`ÔjßÇ>}Ëø„,*·¨Ò»CrĞO¨ôÇ&şı€&W@\Ã^ ÅàßÉ‡Pc|×Ô¿÷şŒ/×õ~‘*ò„l®ä!9^©~œ€'Iš[Õ·¾pŞ`a.µÿÿÿ_½?'Lc{o\˜İº ™¹¤ïÃèM%ëŸ§Ïü 0&t0zÔà: 	‘˜ŸÃí´I¾P„Êt,˜dOpvè:§ÔOWu(ˆ-ğ¡	™º@j"—q’Ï±}¿ãÂcl†W˜t×ÿk•˜ú;ãË!U;Ô¥“æØŞŞêëo£»uü­@+o]}ĞÄó{yİ¨§à0¸“.¾ÊU!t†Îáê^ÃpÀæab à4\İ ‚¦B;h¤|˜ÏÿKi´Z<O9³PqÑoıœ–d‡ãÙÓ)k&ßÄAGwb2”µá4G™šùÿKà©*qªñC}fú_&~ö÷·_ëÇ0İ×€X,un´b–ÿ i”èæ¨Ñl ô˜  €0 ê`œ{NCVjşÑ	ÖÎ¡okA&8_!Ş¥î4de9£÷êˆ4(Ô1ê€°¡k™)ä¹ì˜˜CmYN·ÿ¼€˜ -äY°}ø
+’“gó—ŒXzg¼‹íÎç[¥œ +yM-ï<ş«ßØ=‰$ùb¶|éü½_…"ÿ§ôZş J.aˆ8P¶¶ˆÿıÑÀNÙ¶7êUwáı~ …Ó‰K˜¾–,T5"M5Aœw3çÿÛ,”YìbÌÄëCk?şøâóÏUÃşıÍno @GÈ,2mMşDÇY1éÇÅšğø d˜"Âƒ,Ói&dƒÔorWßÆµå“¬sOsQ“K¡åÃşî7v›Lì1Ô8k?şŸÙ&z³0Êô×–Ko¾÷‚8i¹8³H$¢q0e§àüÄâY™†óùÕ©™­½Â$?àÊÕ{¿ÜøˆSïıÍ/Úßç<RX 0vDc0UTWeC÷³çºÆNÛ°ˆ;a=È ÄA$8 YÖ¸	aïºÌ©£cŠ$±¦Ó¢h|DÈv-°í›flÃWUÓÈØ[ZTU÷:í&ãØ¤ 2R}²ı®P¢«¢"•ÿƒ,l ©üCê@ËÁ/ë/›"şV~(´–6ÿÖÚ#¿´BØ½—ÖüñbHÚ}A?'Å¿ÿÃÂàS¥¼¡­UƒıËšÊÖÑİÌéC…/(kG`ÿræ²µ´wøMÅ„y»—ˆğ……„zˆÿÁXs€9DQo…Y€+L„0vÑHù1Ÿÿ ü¬ÇØ™×4xsf ã¢ßû	$¦0DXBC®’€ u5¥@ÂÖ,h¨¤   °     4   ì
+  ¬  ”    RDEF°
+     Ä     <    şÿ   †
+  RD11<          (   $          <                           H                          T           ÿÿÿÿ          p           ÿÿÿÿ         Œ                             š                            ¨                            ¶                            _sampler_0_ _sampler_1_ HeightLookupTexture_Texture PackedHeightTexture_Texture pdx_hlsl_cb51 pdx_hlsl_cb27 pdx_hlsl_cb14 pdx_hlsl_cb2 «Œ     $            š     ì              ¨     D  €           ¶     <	                    @      <      ÿÿÿÿ    ÿÿÿÿ    `  @   @       <      ÿÿÿÿ    ÿÿÿÿ    x  €   @       <      ÿÿÿÿ    ÿÿÿÿ    ƒ  À   @       <      ÿÿÿÿ    ÿÿÿÿ    ‘     @       <      ÿÿÿÿ    ÿÿÿÿ    ¢  @  @       <      ÿÿÿÿ    ÿÿÿÿ    ¶  €  @       <      ÿÿÿÿ    ÿÿÿÿ    Í  À         ä      ÿÿÿÿ    ÿÿÿÿ      Ì               ÿÿÿÿ    ÿÿÿÿ    8  Ğ         ä      ÿÿÿÿ    ÿÿÿÿ    H  Ü               ÿÿÿÿ    ÿÿÿÿ    M  à         ä      ÿÿÿÿ    ÿÿÿÿ    Y  ì               ÿÿÿÿ    ÿÿÿÿ    c  ğ         ä      ÿÿÿÿ    ÿÿÿÿ    r  ü               ÿÿÿÿ    ÿÿÿÿ    ‚                  ÿÿÿÿ    ÿÿÿÿ    ˜                 ÿÿÿÿ    ÿÿÿÿ    ²                 ÿÿÿÿ    ÿÿÿÿ    Ò                 ÿÿÿÿ    ÿÿÿÿ    ViewProjectionMatrix float4x4 ««                            1  InvViewProjectionMatrix ViewMatrix InvViewMatrix ProjectionMatrix InvProjectionMatrix ShadowMapTextureMatrix CameraPosition float3 «                            Ü  ZNear float                                CameraLookAtDir ZFar CameraUpDir CameraFoV CameraRightDir _UpscaleLodBias _UpscaleLodBiasNative _UpscaleLodBiasMultiplier _UpscaleLodBiasMultiplierNative _UpscaleLodBiasEnabled «««                    ÿÿÿÿ    ÿÿÿÿ    Data float4                              \      P      |      ÿÿÿÿ    ÿÿÿÿ       P         ¼      ÿÿÿÿ    ÿÿÿÿ    à  X          ¼      ÿÿÿÿ    ÿÿÿÿ    ş  `         ¼      ÿÿÿÿ    ÿÿÿÿ    	  h          ¼      ÿÿÿÿ    ÿÿÿÿ    "	  p               ÿÿÿÿ    ÿÿÿÿ    /	  t               ÿÿÿÿ    ÿÿÿÿ    TileToHeightMapScaleAndOffset ««                             WorldSpaceToLookup float2 ««                            ³  OriginalHeightmapToWorldSpace IndirectionSize PackedHeightMapSize BaseTileSize HeightScale «,
+             ¼      ÿÿÿÿ    ÿÿÿÿ    4
+                 ÿÿÿÿ    ÿÿÿÿ    ?
+                  ÿÿÿÿ    ÿÿÿÿ    M
+                  ÿÿÿÿ    ÿÿÿÿ    Y
+                  ÿÿÿÿ    ÿÿÿÿ    o
+                  ÿÿÿÿ    ÿÿÿÿ    MapSize GlobalTime FlatMapHeight FlatMapLerp MapHighlightIntensity SnowHighlightIntensity Microsoft (R) HLSL Shader Compiler 10.1 ««ISGN¸         ˜                    ¡                   ¡                  ¡                  ¡                  ª                   POSITION TEXCOORD SV_VertexID ««OSGNà         È                    Ô                   Ô                  Ô                  Ô                  Ô                  Ô                  Ô                  SV_Position TEXCOORD «««SHEXx	  P  ^  j Y  F         Y F        Y F        Y  F        Z   `     Z   `    X  p     UU  X  p    UU  _  r     _  r    _  ò    _  2    _  "    g  ò         e  r     e  r     e  r     e  2     e  Â     e  r     e       h              
+€        @    €¿6  "            
+r     V    @               8  	r     V     †ƒ    
+     2  r     †ƒ               F    2  r     †ƒ         ¦     F       	r     F    †ƒ    *     8  Â          „        4  
+Â      ¦     @                  3  
+Â      ¦     @          ïÿ?ïÿ?8  Â      ¦     „        A  2     æ
+       Â      ¦        
+2     F     @     ?   ?          2     F     F€        H  Â  €CU ò     F     F~      `     @      8  
+Â     ¦    @            C  C        
+      *       ‚     :        B     
+      @    €?        
+      *       B     @     ?*     2  	R      ¦           ¦
+    2  R          @    C      C         2  R               :     ¦‹    :     H  Â  €CU       †      F~     `    @        B      F‚    
+     F‚    
+     K  B      *      8  B      *           2  
+‚     
+      €        *      8  ò     ö    F           	r     Æ    ö    *     2  
+ò     F               F    2  
+ò     F         V    F    2  
+ò      F         ¦
+    F    8  	Ò      V    ‰    
+     2  Ò      ‰                   2  Ò      ‰         ¦           B     †     †     D  B     *     8  Ò           ¦
+    6  r     †     8  	Ò     V    ‰    
+     2  Ò     ‰                  2  r     F‚         ¦    †      "      F    F    D  "            8  r     V     F    6  r     F    8  r     6     –    2  
+r      æ     &	    F€A      8  r      F     ö      ‚      F     F     D  ‚      :      8  r     ö     F     6  Â     @                  M             *€            
+b      V    @         ¿   ¿    8  ’      V	           2  	      
+     *      
+      2  
+"      
+           : €A          
+2     F      @     ?   ?        6           >  STAT”   @             5                                                                                                                                                                                                                                                                                                                                                                                                                                                                              ûãù¿ÿèğh’·‡@©Ãg<q’
+—“-ù~_ÒÎÇÃ|-U¿‘Ôo¤_"ùÚÈ²,W”Bg§ÿı‚¨NG‘äy?bªA ÂN &¦èğ€®ÀH7%µÁ!OHb˜‰,Ş°Bò`O­¦p™42î½üõLG4i/pãÄÇ£Ó,b½ÏrßòĞVaşÆRş7²¤`¦ïXfÊnıADbNÍ²èÓÅtm–Í9~ “²8f‹;ÃÔa'eq|‘ÿjïÙYÆÿÁnK`1)NéwÑµ|¡?‘hœâp=½Kı¤*á†J{"›;ƒ­q »¬
+Xª´ô¿ü˜ÅÖ˜üi¨Ëbè¿À0%Š·øÛ«òœã÷g  ;· 
+1¾öÀC¬æòL0²€qå?ÿé0úèlµ®Ÿ÷üà3ë5Xú¥|h5}¯ŸOùÿ6eÿp³³=ş °DšOœ¢ĞQºg¦H  K–µŠ8˜İ¿˜ÙÄH¯~ÜLøÅË|Ä*ĞC±¦’aò%QŞLÁì‰ì·¦"‚–ğËaÓÎŞª#´BŠO¿Š(†9.`ôÓoÿ÷r,êw¯É`I‚0fà-¨á‚ÆÖĞŒLÀ¨F"º­ÿïF°ğú«Sx8l‡C¬Õy³Ëx¬¤J‹½»Ğ\sñMwßÒ±ÿÈ´Ru´^oAêõ¹OóÎ¯rÿ‚¢‘•Ûa„·q@2'`%ıú´dAµS9Šw# 	àHã7­¤ ‰ÒIj³€˜€ €:$WAÕÌŒGÃ"t!ÛùÈkÿq™ÀQP¬
+:ûŒÖÀ\x‚˜wÜÙDA)À…İ§¶f5îUr«»àä)9O¼÷ÃÎâ—oÈ ÀkêÂÀkÑ‘·ù©w4‹í÷J8®0WMıìÙ²EO{üıQ˜cwà¸Ô%ªÑk€JC‘‡f¬…¹ëü†>¼ÅYğ“#k8Ëb[}è¤èñõ~R³EüC(%} ’ÆQ_0IAlÁN_H)ûÁ ¤£’¦5yjœq"{Â[)+-Pñ`8b	aç8t1rÌÒ¬ò/~ÌÌ7ªrŠŸ/RÃºF—ÕÏSÁ&©¬ŸşşRÌkNëm!İ}@äÍİ¿ù§œïÀ³€€ cÑƒèÖ`\LÜ9ûc¡dÉË "áíœ"IåV-Ğ0’"J¡3"'ß¡cŸ9¡±ïÃo§âØ@  Sÿ¬æÙ†r…m¬÷šO6Ì3”*Åw¿63`şÀ  âfáàE–*âÎI#ÔLV½"dNôƒ ÄP1ëãyÕ»öab)w€È’?ïÁ#Ú÷î!t”‰Ê¼ìv•g×òrrrrrru×'''/ãWÿ÷Y¡Í³LÂ?Æè\@íTwqûÃ·>Z÷5yBNŠ¥×W‚)¾nñ^Ñ&AM²ˆKµ‰¡²´«:?r6ˆÄğûúT<ªûÍ×&^L•aÓ%Qºã}|uÿA­RQ»©ëš&2d2®×®F±,R*·òÈW‹ó’’OòÁ° F‰+ Pa=á¾¼Ìö5U¿şıcç	æ$†’Óÿ[›aeGKS¢mX¦~®Ñ_9åí§ÏÛõ;ÿÖoòë F‰ñ‚ãŸèR¶PÑ*!Å¥¸P7HrB^l#ÈòhÉ*şmşŞÍ›5ƒ†G5²¦ÿ …‡Şt›¼MyMô5Ú*77ş8¾dñåÕŸ{P£¦÷ÿõ‹ˆÿ ×ˆl#mrYM·ÜÈ¥•Gäú6íØ|š-NzZs'§løĞ§ Æ—ÛÇiyß²™dLH
+6ªß^¤©ıbÕI‡²Ä™ëf%è…9ßö$rÑ—»úTÓ¥/ñÿpô“Z`?m˜İN^âúSç•èàà   H¼° è6ç1FÏV¯¡ ‘Ç8ÉD·â ¯—úâĞx lSÉñÿpÜ?ĞjÉ.1‘ıR—1“8÷ªB`îDqƒI È3ªƒQ9óÿ×|XÛb+ÜDWÿÂ@–(Šo¿ß”[µ+ŠN´L„ lRÊ‹SíúË1Ëütÿ–m?&²xôİ=Óÿ—ÿØjş&Ù›1«º‡ó7€ €’Í°  °NÊc¶·
+¬óLú¡Š~öaüt7ä§óªØ²Ô%€ÃÈ¦+}í×İ¼‘'¯Ê_øÁ¹FA?ÕèQÿ³RğóD¢¯úşMëÖ. cÿî´ÿA¨
+¨s:ƒÖk{xM1J#ÃĞgÕ[şı˜n*gKi/oCÈØ!l„­?ÿ‰5,ÁÈäáHù¬V‰D²'wû÷™ÉŠ‚zòñâ "4PrÍŠç¨·g6	Î‡Ñ'r×Y\
+jŸ÷ßü/ü5Î53h…lqÄY_«3@Ÿ§0Â}ı•S–¯ğ+È4câ‘ƒlaâTL=]bëáñ”³ç“/&Vs­Û}{ÏW×ë¹ğƒ_¯Âtº ”¹IébÅCR äÓÖ’cLT£{Şû‹	Ş…¤İA^æ/ÆLn‡—úÓ†G5ñûú¢¦ñfêC–Éı;ş.óş{,°ÓX¿ÿÃ‡Ã°×Œ´D{R¼˜?6cZ•Õy• H·_À´)N‹jÔ? ‘„×¤ŒcO•ÃFÒ/ÃóŸóÅ±äÎpø7_$ÆÊöú«+ËÆ° ãŸ£-†µ³àn!’xc†üH†S¦AI5$ù’@   éÉbø¼-ËRZF²Ù„¥„aß)o×2üÏµBÛøƒUğ\$.`\AŒóM=ùÌ'vûëÿñq"q+µ+.Á'—ÿsİãúËiŠ
+ÑD±¥·ılqÄvGDwÆ'súï«ÿ¸ÌOÁDƒºd<‚&^3·ß¸„"Õ¡<²¿»Z	™ĞYm‹¶%öìï­ş¶X£ß²N])j·ş²uğ×®VÌÈY]xrd¡EE_ö”)t’/oa)äN{­zPqØ‹ëß3²H  #"l^½´”Gæ*H#ù[~„! ×[5—1I÷ış‡bñµkşsÉ—“17ÎÎiSÆ„ï{}pºîÿè5ÅàÁnZ’Ò5¶Í2$¬óFÙìıû™~g‚Z¡k…ık2e¬BŠß`-ÎL„eÅ[şs"–Ta“èÛÍÊ Vù|½ì¨ç` ÁŸ‹´*IşîÓÛÃÕ©ê÷ı‘ÅŒ—ÿ÷ãg08xöÍïø°—ÿÃ]“¿à qøÒëÏÇ±aËÖDÀÔˆáÅÕ›ïK„jŸ|´;JhrË@ÙÀ8ŠClá–šàúˆ˜º¯ˆ“æ.½¹Ï&E&mW´‹ıè
+t]{sºÁ¾¡€ Ô¢Ş¡š¹C“ĞÈ©­§ 4À*#êo23¡H¬/!(âÂu„gáo®2Ñ!¾F(ŞÚÛeK“İlŞ™›dA ‘23±Ú¨¡Éª.÷(EñòßÕ5Œ³¾ÿüşÁgÌKˆV?!PœD˜ €Í,"K>Q„É+ñ¶ßø¡ßs …F“ëtˆaüdtƒ¤‚%å‘¾FD…ÜY$‡Æ—¶*bâ·qW¿l	wmßsò¼¿ü7ü&Õ\ˆiM˜Ö÷U÷ÿßáŒvøÒø}wûûO˜>¿o‡ô
+à Ü‚{˜O°‘/qòğ¾~0tÒ³ÿİz€åF{şÿ?à
+»"ë×?ÿ`P ı¸ 1™	§ì'%=Ìråäá*Oÿ¼hG­Ü_-q<DúEaFÀ·š§_¾ş¿¢ 8u”!ì¾™÷ÿ HBFB”¬wıù#İ4æû×øíğ:Ç{ò…sC½>øÿäÿ†ºæXJ)ÿŞ=—ßã¸g¸›æ 0’/÷CÇ¬j9ŞdEğØà1â­»§^k·2a_	ï†P0T~$&ÓÑıËüÊo/õ,ºš{ızÿÔÿè5â ½Ğ>Hk4ºmÛ)‘´
+{?Îî>áxL;(p’<dFN.'Eã”ŞîÙÓZi4Ü"‚LIL¿ÿ@ ©ıµv¥«ùgn$‚_ıµY;^—oÿæêÿA®HÈ&°˜R.´†âwæ‚Ñå:w{Eâãê;ÍU_êÁ¢Iû‡„á-õêLu hğRš+ßµV ıU"{zßÑ÷©ÿÈJB-ğ¥•­öûñ÷¨ß=ßù1èUZ7ıª¥şõ·ÿæ‡úC´t2:iài>ˆÂê’A`/2fmÿ÷â@fÈÁi0ªœ&	ÖÇpûÄ{A2H#ÔÕêiŠÓ9YÇÔƒ@ñqäô>D(¯ÔÑßdq·´ïŸøXæµVx—4ÊÄ}sÿÑßÃ† ˜AfzÈ?@#_¾lÂ(ÖCÍcÍÚõ¤`%&¼vz¶ÃËLÙ›¡ÿ@sCŠÑ]WœßÿÅ€ëÔÕ:œ¤1&¢üïú™¸~¢ÿÕ^øE–/ßüsõgÃ:#Õ#Ú¤ ·‡€.#b2¸·L» ç4Ó¹ıøcah†Q…FÉ«¿{àªãFL½^ÿp]ÿá¯= Å¶3ù?¬¡‰BÖÁj9j1—bŠO¦ûô\ÉÌ“Ğ«+“aR6k]®Sv ^Íüõ«íÇ.ß|ñ$J~ pÂĞx«šı\ƒŠÊİëÕÏùš*ÛÓ¨Smkouïûƒşƒ]eÄP¬	ŸÛ»b< àWÙ»İj=°TŞ›ºoµº`† ¤"2»‘˜§Òˆ$>Yhä–Æ†ûĞ/¯÷(Ü`5?\šøşÁg AşÆ)YVa—Êàá~SI°BşPÎØÍÎë8`b²ßŸüxaá® I¡ƒEh®«ÎoÿïøgDaÚ¤{T„ğÂ3¢Fƒ%?¿ñ”¾d¿|áÿ×è5Á­tÌYÂÔ$Œaãpª¦\Ì[<Éüğ_h¨_‘¢{ c
+ÓŠ­â:(â:ßÿ†=ü¯ß«ÚĞÖK×ïşÿğ×eBÿ
+cßÿçÊ^İTRm¶¿Ûg·ÿü8p ›Ÿf$²¯ şâö×?‡ÿÖÀtø 8V8@Ô*òÜ.ó21:˜èÃ¡¬P Dâ)¢}T3*4Ç˜I;õÒ¦MÉµİ×¯ëÌGÀUÎ÷àâøSŠó0Øq÷áÎ;—”öP_d˜é“Ùdı¢$à%,w;à`@ TzZĞ-ËÚpL!)®„ÇRììüÆ\q™·ásá® b:À¢ÒŒ®İûMÖâ1VÍûÿ~÷é“ëF™|÷ÿşà2Äş@Ä•î	ÊàóB•°¢¨ı{ÿûÌŒdu9”ƒï¯nÂpÓ"/´®ß&+ÿ/0g#¹şsô€‘	óf\¾|ÿ½üB¿úu ¬É,5Âœ/AóÙ˜UúÑ
+–}ÿ#3&8ç8¾˜Æ”Á©†¥’£ÜLˆÁüÓ¦JŸØó3ØÕ}ïÿ{h€ùbÇN†”Õí¾ÂAÌºë}°0:öıßÿÃğÀ8kè('Óæ4°2‚¾úM•œ¡®6™qŠ à;;{ğ(êB
+¿Béôp<å¡‹â—Oÿ€U· 3$Ãÿú8eùîRŸÉın5OîÿnN9xÿãóôÍ}´˜4d¬Ä¨ê`¸EfHi,Yi¨ÏğºÂë×Av?QY,Ûï†w,•şë–ÆİÑì"¬_=hì[Z)Oøâó{ºõâ˜¢údı']¤n<ò…?TDê¶ÁŒ/ø-aiQĞªo-şK÷aïèŒz¡v»ÜÙ6nÆ}ÿÿ†ÃZ, Ò 
+]N–QCŸøf@å”ç“f&áâö1JÌr³´Î£C¬>å‰Ÿ—qRÅÿÊÿÊàá~SI°Bú‡Í4™® 6c¥­Tõ-ÿ|ìTfJ=Àû—2UÍÏÿâY yPpbù:Ÿ5†zÿ¿öjWŸÿëıµ„I{ÿr™îÿ¸ÿÍÃüğÛ !1czÓ
+Šã«×¿ÿƒtÉco¸äÖŸ¤QB\½ÿÌØ=ü¼øÿ“™E‘dZÿşõg'O#Èò<ŸıXş &¦èğ€®ß¢K7¬¼˜ë@nKj	
+zCÁÇ‰G¤æŒWåò˜qÂdÀËº÷óÕ1Ñ©{­fâÆQ“ßÏ.oe@À&@p À·wCô ›ÃÜKÔıß£0¤šp¡,lQÅ¬áôèì;‚Ü–ÀNB”¥ År@ƒ¬…£ÅÔÈ-:É»ÿÿ´ bY]4”N#  Ğ‘³cGZ¹_í0ı®<0İ$0 wyÙ€+xÉ/ßĞZ­B“O­àecô€+…,y-ÿïó …Øvø…8äğÒâ'¿ °PÈl?¢rp«À$€*CŞ_«(IÍQ?"üIj{h_Çt%\—š%‹7ÿ¬Ä'ü3¼_7Ş´F˜N¬GwL*„ ïûø`'àİ7Š„µæÀè’ôÓ½ó°RÙ|1=F»Èî°$ø " ÄMŒ¶³œŸ™ˆe0î¤ilw<Í'Š —ô ¶N€<ÿ¾2  @ Y‹ á?aÊÎÁ5µËˆNÏX<=ŞÖ\È·_ûÆ3œ_ô¤€–àl ÑD_áAä+WÎÛø)a=óÿæfèÍßğWLßç³|</ğ[ğ”Ww©‹oYÌ.ÌB(ôğ¯¨¯ïµ›jrÛÛC€İÀóŠfıHQWü©¡Ú8Qÿã#Æ­ÍíC#ÉÉÉÉÉÉÉ×‡ÿÁÿ ÍLàÒ#,34÷Õø¿H@Odyİˆ ÈÉÚ{ûû/ )ëÂ7–­·¿U§ZÌ,àf™Eé"À¿¿€”W:ÔĞúÓÕö¤â•@Ê+? ©ıÁ«¼ú§±u.W³£ÇèQ¿2H+İ>ë¹órıÁİ0Ïîúu„ \°ªÏÌÆ õFƒS„—ÀEÈò}®•„ÁÀ7€“ùø ç3)õÃñpƒı¨[î8ğàc’=32`Õ!—8üÓN»éåºOŠËÏıv†ú -z¤l–¯yé¯®6~° VêÇC«bü`ûa@ğê7l¸!xÁFğP©²F¸caíÌL-9lZMÚÿô¦U  …] H "ö1JÈR³Ÿa»¨v”É¦'Ì¯ßÆ= 8SÆKQúÏb=ÿ~xYK×<q+!ã½ùäQr,œ‹''"È²r,‹"È²,‹"È²,‹''"ÉÉÉÉÈ²,œœœœ‹''"ÉÈ²r,‹"ÉÉÉÉÉÉÉ×O'O#Èò<ƒûR¿u¾çÍ‚äµl>ıoğ57G€DvA¹-¨n	
+zCÄIfõ‚“}m0ã„É¡—uïçªb9£I{€ÂÁÀ,mø(a‰;6Ë£NN¶€æîÃ²FAø‚NÇáš%œı`áéİ9à¦ #aËeö!¯æáøhqÑš†-
+õ£ü
+J;ÔÆ¡Í-K?´·QÀ)‘@G-„£NxğÏÿv0Bğ™]–Ô?\Ä"ex1&û5¦Gş06hO8º ãÊşÿÒ¢÷í­y÷ÍM´.¾ aX[8ÓIc:M6y‚)ä:`—ĞÔ *`\•‡ÑƒàÿáËì¾CùıÀĞRQÒ¦5»Paü0ô†“j£FÌBy©u¯&q0'9Î§xQÙ?à^"„X»Q¶÷hìlk¼s¾‡uYÃ¾#e{é&ƒdƒ1‘\¶ûçgvYÈş
+ü"g\éLwİíñy Násp©Ö2?!ä–a4ÑWÊ•ò1Ä³Ÿ‹[­pÃÀ(¤#ZŞ‡œÙ_11EOîi­ †ö$İE±°«à‡€ @l “0¬ 1an´ŞÑ´˜ré´·?­„«üç¯şÆ0º7;©›˜×9Ÿ şqı:\PJõÙOöHÃšQhÅßûÿ|€m0À²İu !ĞÇ×”«"<Öˆö±1÷l[o¼sĞ¡¶ıÆ¹ã*Î­-÷çõxî‹ˆîHòrrrrrruğÿı| `g52w€HŒ°ÌTÓßWàbıı =eâò­Ñÿò@™C°eÍéàKôÔï×1€ıÅLÇ‡ÒFÍïÈù‰e€7Mlšl¬è¹]7êëkss/Ãòô¤y>ÿøKüÇ‘äíC'''''''''''''''''''''''''''''''''''''''''''''''''3ËW'O#Èò<ëÇ&=™cèşxÃ–ø_–‚³ö2l÷ğ¹½•#7zÃ6Spçê~ &¦èğ€®ß¢K7¬¼˜ëDñ˜®²Ù§¨ü\0ÌCQ„•ÅòGı£'z@s÷0¬—eÁğü5hØ´{†€ Rn°)b)Ëÿñâ\›Æ×kçÿşdAĞBóZS‰ÖĞ™İ·|YÿÌŒdpU«PğÓû/ä6!ÄÓË©p-0¨‚«]×¾…K/ÑÎÿÚŸñù°-Iñ®?óÁı‰Å…ÿğ×‹ƒÍæ8[UÚÂÎ =45€—2°5âíA~%R2ûÉˆ‹Á÷û|~¥|b‚R¢‚õO'{ªáã€ zÉU,Ù”Ec¢;-½±ka
+ƒU(ï+àcç¤ƒ–…V[}ŸşüıdıOÊiLux¹şÜÃ\1EX|æ–R=&A˜U+9åO¶Ì3”+mg´²_í³å
+µ
+_éŠ.õ˜À¶”¨GÂ[za%Eİz­­'” ’.d§ÔÊ‰÷¦ğl)*G¹ÍQM{š( £f¨µgº ¬?÷_òÀ½‡KçÖpßá¯
+L@ ()HJ×œq"{Â[)+/‚’µ1¨uú¯‡C§,Ám*Î¢Õ ¿† sóıû30Ş©ÜåpÂvÑĞd¢Í¡ï„y·¿ûÿı  X¾ğ¬äEN'Ÿä&G“““““““¯ü ×»‘“´÷÷ö_@S×„,o,7[o~,ëvW0Rÿ†µØtÔóìì÷ÈÎB}ô)¨?ù~—‘õê6Å8ø+Ñ éKù~ş°•`jX¼l G‰r>N²ÿÿñaßo¯OÅò§M?kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkà&mOÅÓúÿëèÒ‡8 "  "˜Áu®}N˜¯• <çAÌ#±o¤:GNÿÎMN*ø°åmS™»şLjÀ  oÖ8¸}a/ÃX·œA—MÚX7üó@Š’0wPFø?p§‘äyObH@ğ Ü–Ô>ô†)ƒIÍ¯Ëå0ã„É—uïçªb9£R÷Z
+Ì?ÅŒ£'¿\ŞÊ¼aÖø_Ÿ6
+wfÕ°ûõ¿‡JªMçfß‚†á,lzmÍİ‡d©ŞïXÅğ[’Ø†Ìr8ÍŞK1dlZ=àÄúQn~ÒP¯s}`%Èó†k7‡ˆSO.yb÷ïãÓ…0”ŠÛË&RA~¬±"°\â“<[+ø‡±7mE0˜OáoÑ˜j‘ùœçF}]»a:Ì]ø"æ3àåÂ”÷}öeß05cuğh{)+£‘_Ç¿ ›x•o‘$ @Lgƒz0Šµ©«ãkŞbG9È˜³ŞQDùâ.!‡¾£ô|j‚R¢‚õO'{¤Ñ´  @=°Y6¼â:aQ…’](¼0 @Î,Y›ğo«×àÿÄ€|L†Ñ6¡Ç½­„*T _U Ã"ŠG….qëÁÉîœıãÛ5èO;ÈT;Úã~a¸éïºËxvoã·è]ùÂ²ÆP,/œ=î11EJw4Õ¸ŠDIT&\Jû’dŒB‡ö¶æX3`şÀ  çøÃÃ€ @l ’wğˆCO
+&qTûS	*(f€Ô´‰‡ÿ¬¨¶  ([š}÷6Ì3”*Åw·6LV½"\Nôƒş‚’J˜Ô9¥« ¤£’¦5ij3  aØÔın	®£¿ßşuSşıK|wPv¼ş8÷û5cÿAÏI¸±û‡Øn ‡C^b¬ŠxIµ‰¸‹bÛ}ç ÜHÀğ„VÊJËTüX‚xy×ÎFœ³´«<‹ß³3êÎW6ˆ£ÙÍv|—ÎTÂÎÓJ7g…¿$Ÿ×<œœœœœœœœÿàÿ€æ¦Nğé–Šš{êü_¿¤  '²¼îÄ ddí=ıı—ĞõáËÖÛß‹*Ó­GgÉ6êírx²Šæô÷@îf|)İ0éWx EÄ¦l‰Ë_ÌS^¡º°mF²eÿú»
+š¼}F–Ã›«é*jÃÿÎ#6_€rzB-{öZ»ïÛo”3Ê€“Cò`’j>1$GÉö’VbààsR? æe#>¸|²Ãı¨¯¸ ØK»6­ËÖ‚c’:™™0êËœ şi§]ôòİ'Åeçş»@Ú -z CêÂzjšŞ¤5a§kCÚı`¾.ß†ş0}Š±Àğê7l¸7ã?ÁB¢ÉámÛ˜˜ğe±¾n×ô¦U  …] Zõüÿ°İÔ;JdŠÓæAtëUrN=ûs\a–Ë_¼ò—»<$ç¡4Ÿ÷Ï"È²,‹"È²,‹"È²,‹"È²,‹"È²,‹"È²,‹"È²,‹"È²,‹"ğÿ ô Aï
+<‘L|ùÄƒ¿ÿxtkÎ	c>ÙÆÓ:dYE‘dYE‘dYE‘dYE‘dZRtÿÎş eèï? ‹  0_ëÌƒ)À Bq$XOê€11€ëeù 3Yd­ä£4Ù$¿Ğ ~†"ÌLx„×Q4?!ffÆ0Q~Å‹‘à[
+x•UÚè¯ŸßŞ0ß‚Ü¡eš|B
+r”º{ÉÿÚº|yá»<Óª÷Ìİ#şğJûãıNG‘äıŠ©98 š›£À"» Ü–Ô7…=!Šb$³zÁÉ>¶˜qÂdĞËº÷óÕ1Ñ¤½ÃL±Šô<aË|/ËAY‡ûH6{ø\ŞÊ‘‚›½a›)¸sõ‰;6Ë£OÑ¶[4æAø‚NÈáš,ïCQ„•ÅòGı®ı]Àö–ê8Œ‚;8ŞK1ı`&Èó†g}7áñ	äœä³‹=âã­x16”[›¼”+Èi¬“<-•üCØ†¿›À<z`0¦”‚o/÷¸ÍZ    ª½QáG:Ó¥1ŞIºúƒÙ“~‰M—~×Úşün3Vv²xâ°>½÷oüÚıö*&©Xö}ÁzÅ]Áı‘ˆwˆ«ía£v€E£"ª™ÈWı‡(k;‚<<B…>bbœZ1‰ÛÍ„ÉÜÄ Ñ"AÕŒ
+àğ%°çÛgš1£LÜ ÓØO›3÷*¹Uİd Úà ¢l&ö§Ö~›ıÿ>$D9"ÛÊŞÎÓ«¸ò´´¿l®÷`şı
+Êß¼·hım
+X$ÄD{HwM¾õûAã$“İEc±eŸşx,à`m@Ô"‡<8Ğ%¿ıñ„?¡…cŞóÌ²‹¼‡SVÒğÈ¿C¯g/%äÉ  € ‚=½íªˆ;”’ @  ;ÀshÀv¬D‚®˜  î  à> Ñ‡ä°¼yšÀR  ˆÀs¢H
+&’“äÍ³` ŞkJsÂLõ~0ŠÄÓQIcDÃŠkz4³÷÷ğ“pîµ'·#±Kjz'ıá?Æƒ¸ÿÌLQSÄ;škÈ!v$İE±°«ì!à  $ÌBë1qéáEN*VûÒdˆR³Q/õ˜À¶”¨GÂ[{lÃ9B­B—úb‹, ˜­ĞR,Û¤¯L$¨¡›¯Uµ¤ñP¤Ä ’”„­x6•#Üæ¨¦’äø4”u©C¯Uaº†Ñfü€OÓváxh›-Õİ!æ·¬˜ô}”ƒÒ üßı£0ïßïzüoì7ÀècëÌU‘O	1¢6±1÷l[o¼à‰ØŠÙIYj€_‹ÃO:ùÃ¡ˆÓ–`¶•g‘{öfa½S¹Êëˆ]b8á;¿<$÷!¾ãBQ³ıùääääääääøS ÿ„¼	†šûà>ÿ¢|œŸ¿ú	Á;cÕ>¨ÿşE‘dYE‘dYE‘dYE‘dYE‘dYE‘dYE‘dYE‘dYEÃÿú@E8ËšYòçFs[ã§bÓK>\èÎkCÈ²,‹"È²,‹"È²,‹"È²,‹"È´µÿañå_ `  êñ^•³š›÷'QŒÄëÙ‘n_õ™bÄÙæ
+²Ñ»P zÆs*<Zl(›à”RèSZ†¼¥?Ã:bêÍO"š¿&­¼œıbŸu.DÓÖ]u÷r²Óÿşğ
+VˆíÒ•¨S…¯qÅq\”¬n,Hô¼ä2ş­ßÿwÉƒş
+pÈò<'ÿV D…ÿ€	©º< +·è’Íë/&úĞ$’Ú‡ÂBÅ0qâcÑé9£ù|¦p™02î½üõLG4j^ëAY‡ø±”d÷óË›ÙP0	 0-ÇĞı&ğ÷õ?wèÌ)&œ(Kqk?M5ÌXş‚Ü–À(F(.*û¬
+~dl-Äi‘‚â›({üï	ÈÊce+\Û%|ÆÎ"E{öâgÆ._€ƒ®(5<5Tv»¿¸<°œnEBŠßÚ*8[0 |ıvN?¼½šË5_¿ÿ€µtìùê:dºïïıT6~
+>.®9ãYyF]^&<”f·Ú˜£_Ÿ'lÛÈ”aLro)¢vWx%„qË[PàóÛ+í¦¢ì´É‘-è#MÂñ¾„$P›”„ŞÁvj¼# ÿh²YlÿÿĞ,ĞwKÖ‚Ø‹­š,_ÿüCÁßş0~ğïÕÇ&  •ìpİ˜„8ôğ¢§'}ädCe1Ì3=gÂ¡I ¡*	fğ DAˆ›mg9>53¦Ô-ç™¤ñ@ş€ÉĞ‚?ğ°ÃÒØÎn¸Pt+MßŸ†m†û	½ÏğÖ ïã'ò  ˜°ö¡¬ì[\¸„ìõƒÃİíeÌ‹uÿ¼c9ÅÿJH ÙnŞŠîõ1mâK9…ÙˆEõıö¢BàÓmBî[{hp¸bÑLÃŸ¡daÿ÷ğR»ßZ5=5ñşÔ˜¥Şæ21«O­ÿğŒs2#ÉÉÉÉÉÉÉÉ×'''Y—'''''''''''''''''''''''''''''''''''''''''''''''''''ÿø bÒı¯şğ
+
+// === Shader Info === 
+
+// Shader file: gfx/FX/pdxmesh.shader
+// Effect: selection_marker
+
+
+
+// === Defines === 
+
+#define PDX_DIRECTX_11
+#define VERTEX_SHADER
+#define PDX_HLSL
+#define VENDOR_NVIDIA
+#define JOMINI_DISABLE_FOG_OF_WAR
+#define PDX_MESH_SNAP_VERTICES_TO_TERRAIN
+#define SELECTION_MARKER
+#define PDX_MAX_HEIGHTMAP_COMPRESS_LEVELS 5
+#define JOMINI_REFRACTION_ENABLED
+#define PDX_WINDOWS
+
+
+// === HLSL Macros === 
+
+#define PDX_POSITION SV_Position
+#define PDX_COLOR SV_Target
+#define PDX_COLOR0 SV_Target0
+#define PDX_COLOR0_SRC1 SV_Target1 // Use this when doing dual source blending, currently only supports that for render target #0
+#define PDX_COLOR1 SV_Target1
+#define PDX_COLOR2 SV_Target2
+#define PDX_COLOR3 SV_Target3
+#define PDX_COLOR4 SV_Target4
+#define PDX_COLOR5 SV_Target5
+#define PDX_COLOR6 SV_Target6
+#define PDX_COLOR7 SV_Target7
+#define PDX_VertexID SV_VertexID
+#define PDX_InstanceID SV_InstanceID
+#define PDX_DispatchThreadID SV_DispatchThreadID
+#define PDX_GroupThreadID SV_GroupThreadID
+#define PDX_GroupID SV_GroupID
+#define PDX_GroupIndex SV_GroupIndex
+#define PDX_TessFactor SV_TessFactor
+#define PDX_InsideTessFactor SV_InsideTessFactor
+#define PDX_OutputControlPointID SV_OutputControlPointID
+#define PDX_DomainLocation SV_DomainLocation
+#define PDX_RenderTargetArrayIndex SV_RenderTargetArrayIndex
+#define PDX_ViewportArrayIndex SV_ViewportArrayIndex
+
+#define PdxDomainTypeTriangle "tri"
+#define PdxDomainTypeQuad "quad"
+#define PdxDomainTypeIsoline "isoline"
+
+#define PdxPartitioningModeInteger "integer"
+#define PdxPartitioningModeFractionalEven "fractional_even"
+#define PdxPartitioningModeFractionalOdd "fractional_odd"
+
+#define PdxPrimitiveTypePoint point
+#define PdxPrimitiveTypeLine line
+#define PdxPrimitiveTypeTriangle triangle
+#define PdxPrimitiveTypeLineAdjacency lineadj
+#define PdxPrimitiveTypeTriangleAdjacency triangleadj
+
+#define PdxTessellatorOutputTopologyPoint "point"
+#define PdxTessellatorOutputTopologyLine "line"
+#define PdxTessellatorOutputTopologyTriangleCw "triangle_cw"
+#define PdxTessellatorOutputTopologyTriangleCcw "triangle_ccw"
+
+#define PdxMeshShaderOutputTopologyLine "line"
+#define PdxMeshShaderOutputTopologyTriangle "triangle"
+
+#define mod( X, Y ) ( (X) % (Y) )
+
+float2x2 Create2x2( in float2 x, in float2 y )
+{
+	return transpose( float2x2( x, y ) );
+}
+// TODO, Create3x3 should be transposed in hlsl, and not in glsl, and then the mul() arguments should be reversed
+#define Create3x3 float3x3
+float4x4 Create4x4( in float4 x, in float4 y, in float4 z, in float4 w )
+{
+	return transpose( float4x4( x, y, z, w ) );
+}
+
+#define GetMatrixData( Matrix, row, col ) ( Matrix [ row ] [ col ] )
+
+float3x3 CastTo3x3( in float4x4 M )
+{
+	return (float3x3)M;
+}
+
+#define lessThan( a, b ) ( (a) < (b) )
+
+float2 vec2(float vValue) { return float2(vValue, vValue); }
+float3 vec3(float vValue) { return float3(vValue, vValue, vValue); }
+float4 vec4(float vValue) { return float4(vValue, vValue, vValue, vValue); }
+
+
+struct PdxTextureSampler2D
+{
+    Texture2D 		_Texture;
+    SamplerState 	_Sampler;
+};
+struct PdxTextureSampler2DMS
+{
+    Texture2DMS<float4>		_Texture;
+};
+
+struct PdxTextureSampler2DArray
+{
+    Texture2DArray	_Texture;
+    SamplerState 	_Sampler;
+};
+
+struct PdxTextureSampler3D
+{
+    Texture3D 		_Texture;
+    SamplerState 	_Sampler;
+};
+
+struct PdxTextureSamplerCube
+{
+    TextureCube 	_Texture;
+    SamplerState 	_Sampler;
+};
+
+struct PdxTextureSampler2DCmp
+{
+    Texture2D 				_Texture;
+    SamplerComparisonState 	_Sampler;
+};
+
+// These are for separate Texture/Sampler objects
+#define PdxSampleTex2D(tex,samp,uv) (tex).Sample( (samp), (uv) )
+#define PdxSampleTex2DLod(tex,samp,uv,lod) (tex).SampleLevel( (samp), (uv), (lod) )
+#define PdxSampleTex2DGrad(tex,samp,uv,ddx,ddy) (tex).SampleGrad( (samp), (uv), (ddx), (ddy) )
+#define PdxSampleTex2DGather(tex,samp,uv) (tex).Gather( (samp), (uv) )
+
+#define PdxSampleTex3D(tex,samp,uv) (tex).Sample( (samp), (uv) )
+#define PdxSampleTex3DLod(tex,samp,uv,lod) (tex).SampleLevel( (samp), (uv), (lod) )
+
+#define PdxTexture2DSize(tex,size) (tex).GetDimensions( (size).x, (size).y )
+#define PdxTexture2DLoad(tex,uv,lod) (tex).Load( int3((uv), (lod)) )
+
+#define PdxTexture2DArraySize(tex,size,elements) (tex).GetDimensions( (size).x, (size).y, elements )
+
+#define PdxTexture3DSize(tex,size) (tex).GetDimensions( (size).x, (size).y, (size).z )
+#define PdxTexture3DLoad(tex,uv,lod) (tex).Load( int4((uv), (lod)) )
+
+// These are for the combined TextureSampler objects
+#define PdxTex2DSize(samp,size) PdxTexture2DSize( (samp)._Texture, (size) )
+#define PdxTex2D(samp,uv) PdxSampleTex2D( (samp)._Texture, (samp)._Sampler, (uv) )
+#define PdxTex2DLod(samp,uv,lod) PdxSampleTex2DLod( (samp)._Texture, (samp)._Sampler, (uv), (lod) )
+#define PdxTex2DLodOffset(samp,uv,lod,offset) (samp)._Texture.SampleLevel( (samp)._Sampler, (uv), (lod), (offset) )
+#define PdxTex2DBias(samp,uv,bias) (samp)._Texture.SampleBias( (samp)._Sampler, (uv), (bias) )
+#define PdxTex2DGrad(samp,uv,ddx,ddy) PdxSampleTex2DGrad( (samp)._Texture, (samp)._Sampler, (uv), (ddx), (ddy) )
+#define PdxTex2DGather(samp,uv) PdxSampleTex2DGather( (samp)._Texture, (samp)._Sampler, (uv) )
+#define PdxTex2DLoad(samp,uv,lod) PdxTexture2DLoad( (samp)._Texture, (uv), (lod) )
+#define PdxTex2DMultiSampled(samp,texelcoord,sampleidx) (samp)._Texture.Load( (texelcoord), (sampleidx) )
+#define PdxTex2DMSSize(samp,size,samples) (samp)._Texture.GetDimensions( (size).x, (size).y, (samples) )
+
+#define PdxTex3D(samp,uv) PdxSampleTex3D( (samp)._Texture, (samp)._Sampler, (uv) )
+#define PdxTex3DLod(samp,uv,lod) PdxSampleTex3DLod( (samp)._Texture, (samp)._Sampler, (uv), (lod) )
+#define PdxTex3DLoad(samp,uv,lod) PdxTexture3DLoad( (samp)._Texture, (uv), (lod) )
+
+#define PdxTexCube(samp,uv) (samp)._Texture.Sample( (samp)._Sampler, (uv) )
+#define PdxTexCubeLod(samp,uv,lod) (samp)._Texture.SampleLevel( (samp)._Sampler, (uv), (lod) )
+#define PdxTexCubeBias(samp,uv,bias) (samp)._Texture.SampleBias( (samp)._Sampler, (uv), (bias) )
+
+#define PdxTex2DCmpLod0(samp,uv,value) (samp)._Texture.SampleCmpLevelZero( (samp)._Sampler, (uv), (value) )
+
+// Vulkan fails to compile shaders with this function call properly
+// Commenting it out until we can fix this issue
+//#define PdxCalculateLod(samp,uv) (samp)._Texture.CalculateLevelOfDetail( (samp)._Sampler, (uv) )
+
+float4x4 FixProjection( float4x4 ProjectionMatrix )
+{
+	// Enable for "debug" drawing to see if some objects is missing fix
+	#if 0
+	for ( int i = 0; i < 4; ++i )
+	{
+		GetMatrixData( ProjectionMatrix, 0, i ) *= 0.5;
+		GetMatrixData( ProjectionMatrix, 1, i ) *= 0.5;
+	}
+	#endif
+	
+	return ProjectionMatrix;
+}
+
+#define PdxBufferFloat  Buffer<float>
+#define PdxBufferFloat2	Buffer<float2>
+#define PdxBufferFloat3	Buffer<float3>
+#define PdxBufferFloat4	Buffer<float4>
+#define PdxBufferInt  	Buffer<int>
+#define PdxBufferInt2	Buffer<int2>
+#define PdxBufferInt3	Buffer<int3>
+#define PdxBufferInt4	Buffer<int4>
+#define PdxBufferUint   Buffer<uint>
+#define PdxBufferUint2	Buffer<uint2>
+#define PdxBufferUint3	Buffer<uint3>
+#define PdxBufferUint4	Buffer<uint4>
+
+#define PdxStructuredBuffer StructuredBuffer
+#define PdxRWStructuredBuffer RWStructuredBuffer
+#define PdxRasterizerOrderedBuffer RasterizerOrderedBuffer
+#define PdxRasterizerOrderedStructuredBuffer RasterizerOrderedStructuredBuffer
+
+float 	PdxReadBuffer( in PdxBufferFloat Buf, int Index )  		{ return Buf.Load( Index ); }
+float2	PdxReadBuffer2( in PdxBufferFloat2 Buf, int Index )		{ return Buf.Load( Index ); }
+float3	PdxReadBuffer3( in PdxBufferFloat3 Buf, int Index )		{ return Buf.Load( Index ); }
+float4	PdxReadBuffer4( in PdxBufferFloat4 Buf, int Index )		{ return Buf.Load( Index ); }
+
+int  	PdxReadBuffer( in PdxBufferInt Buf, int Index ) 		{ return Buf.Load( Index ); }
+int2 	PdxReadBuffer2( in PdxBufferInt2 Buf, int Index )		{ return Buf.Load( Index ); }
+int3 	PdxReadBuffer3( in PdxBufferInt3 Buf, int Index )    	{ return Buf.Load( Index ); }
+int4 	PdxReadBuffer4( in PdxBufferInt4 Buf, int Index )    	{ return Buf.Load( Index ); }
+
+uint  	PdxReadBuffer( in PdxBufferUint Buf, int Index )    	{ return Buf.Load( Index ); }
+uint2 	PdxReadBuffer2( in PdxBufferUint2 Buf, int Index )  	{ return Buf.Load( Index ); }
+uint3 	PdxReadBuffer3( in PdxBufferUint3 Buf, int Index )  	{ return Buf.Load( Index ); }
+uint4 	PdxReadBuffer4( in PdxBufferUint4 Buf, int Index )  	{ return Buf.Load( Index ); }
+
+#define PdxReadRWBuffer(buffer,index) (buffer)[(index)]
+#define PdxWriteRWBuffer(buffer,index,value) (buffer)[(index)] = (value)
+
+#define UINT16_MAX 0xffff
+#define PI 3.14159265359
+
+float2x2 Create2x2( float a, float b, float c, float d ) { return Create2x2( float2( a, b ), float2( c, d ) ); }
+
+#define PdxSampleTex2DLod0(tex,samp,uv) PdxSampleTex2DLod( (tex), (samp), (uv), 0 )
+
+#define PdxTexture2DLoad0(tex,uv) PdxTexture2DLoad( (tex), (uv), 0 )
+
+#define PdxTex2DProj(samp,uv_proj) PdxTex2DLod0( (samp), (uv_proj).xy / (uv_proj).w )
+#define PdxTex2DLod0(samp,uv) PdxTex2DLod( (samp), (uv), 0 )
+#define PdxTex2DLod0Offset(samp,uv,offset) PdxTex2DLodOffset( (samp), (uv), 0, (offset) )
+#define PdxTex2DLoad0(samp,uv) PdxTex2DLoad( (samp), (uv), 0 )
+
+#define PdxTex3DLod0(samp,uv) PdxTex3DLod( (samp), (uv), 0 )
+#define PdxTex3DLoad0(samp,uv) PdxTex3DLoad( (samp), (uv), 0 )
+
+float4 FixProjectionAndMul( float4x4 ProjectionMatrix, float4 Vector )
+{
+	return mul( FixProjection( ProjectionMatrix ), Vector );
+}
+
+
+
+// === Vertex Structs === 
+
+struct VS_INPUT_PDXMESHSTANDARD
+{
+	float3 Position : POSITION;
+	float3 Normal : TEXCOORD0;
+	float4 Tangent : TEXCOORD1;
+	float2 UV0 : TEXCOORD2;
+#ifdef PDX_MESH_UV1
+	float2 UV1 : TEXCOORD3;
+#endif
+#ifdef PDX_MESH_UV2
+	float2 UV2 : TEXCOORD4;
+#endif
+	uint4 InstanceIndices : TEXCOORD5;
+#ifdef PDX_MESH_SKINNED
+	uint4 BoneIndex : TEXCOORD6;
+	float3 BoneWeight : TEXCOORD7;
+#endif
+	uint VertexID : PDX_VertexID;
+};
+struct VS_OUTPUT_PDXMESHSHADOW
+{
+	float4 Position : PDX_POSITION;
+	float2 UV : TEXCOORD0;
+};
+struct VS_OUTPUT_PDXMESHSHADOWSTANDARD
+{
+	float4 Position : PDX_POSITION;
+	float3 UV_InstanceIndex : TEXCOORD0;
+};
+struct VS_INPUT_DEBUGNORMAL
+{
+	float3 Position : POSITION;
+	float3 Normal : TEXCOORD0;
+#ifdef PDX_MESH_SKINNED
+	uint4 BoneIndex : TEXCOORD1;
+	float3 BoneWeight : TEXCOORD2;
+#endif
+	uint2 InstanceIndices : TEXCOORD4;
+	uint VertexID : PDX_VertexID;
+};
+struct VS_OUTPUT_DEBUGNORMAL
+{
+	float4 Position : PDX_POSITION;
+};
+struct VS_INPUT_PDX_TERRAIN
+{
+	float2 UV : TEXCOORD0;
+	float2 LodDirection : TEXCOORD1;
+	uint4 NodeOffset_Scale_Lerp : TEXCOORD2;
+};
+struct VS_INPUT_PDX_TERRAIN_SKIRT
+{
+	float2 UV : TEXCOORD0;
+	float2 LodDirection : TEXCOORD1;
+	uint4 NodeOffset_Scale_Lerp : TEXCOORD2;
+	uint VertexID : PDX_VertexID;
+};
+struct VS_INPUT_WATER
+{
+	int2 Position : POSITION;
+};
+struct VS_OUTPUT_WATER
+{
+	float4 Position : PDX_POSITION;
+	float3 WorldSpacePos : TEXCOORD0;
+	float2 UV01 : TEXCOORD1;
+};
+struct VS_INPUT_PDXMESH_MAPOBJECT
+{
+	float3 Position : POSITION;
+	float3 Normal : TEXCOORD0;
+	float4 Tangent : TEXCOORD1;
+	float2 UV0 : TEXCOORD2;
+#ifdef PDX_MESH_UV1
+	float2 UV1 : TEXCOORD3;
+#endif
+#ifdef PDX_MESH_UV2
+	float2 UV2 : TEXCOORD4;
+#endif
+	uint InstanceIndex24_Opacity8 : TEXCOORD5;
+};
+struct VS_INPUT_DEBUGNORMAL_BATCHED
+{
+	float3 Position : POSITION;
+	float3 Normal : TEXCOORD0;
+	uint InstanceIndex : TEXCOORD4;
+	uint VertexID : PDX_VertexID;
+};
+struct VS_OUTPUT_DEBUGNORMAL_BATCHED
+{
+	float4 Position : PDX_POSITION;
+};
+struct VS_OUTPUT_MAPOBJECT_SHADOW
+{
+	float4 Position : PDX_POSITION;
+	float2 UV : TEXCOORD0;
+	uint InstanceIndex24_Opacity8 : TEXCOORD1;
+};
+struct VS_OUTPUT
+{
+	float4 Position : PDX_POSITION;
+	float3 Normal : TEXCOORD0;
+	float3 Tangent : TEXCOORD1;
+	float3 Bitangent : TEXCOORD2;
+	float2 UV0 : TEXCOORD3;
+	float2 UV1 : TEXCOORD4;
+	float3 WorldSpacePos : TEXCOORD5;
+	uint InstanceIndex : TEXCOORD6;
+};
+
+
+// === Constant Buffers === 
+
+cbuffer pdx_hlsl_cb51
+{
+	float4x4 ViewProjectionMatrix;
+	float4x4 InvViewProjectionMatrix;
+	float4x4 ViewMatrix;
+	float4x4 InvViewMatrix;
+	float4x4 ProjectionMatrix;
+	float4x4 InvProjectionMatrix;
+	float4x4 ShadowMapTextureMatrix;
+	float3 CameraPosition;
+	float ZNear;
+	float3 CameraLookAtDir;
+	float ZFar;
+	float3 CameraUpDir;
+	float CameraFoV;
+	float3 CameraRightDir;
+	float _UpscaleLodBias;
+	float _UpscaleLodBiasNative;
+	float _UpscaleLodBiasMultiplier;
+	float _UpscaleLodBiasMultiplierNative;
+	float _UpscaleLodBiasEnabled;
+}
+cbuffer pdx_hlsl_cb27
+{
+	float4 Data[2];
+}
+cbuffer pdx_hlsl_cb28
+{
+	float4 JointVertexMatrices[3];
+}
+cbuffer pdx_hlsl_cb50
+{
+	float ShadowFadeFactor;
+	float Bias;
+	float KernelScale;
+	float ShadowScreenSpaceScale;
+	int NumSamples;
+	float4 DiscSamples[8];
+}
+cbuffer pdx_hlsl_cb14
+{
+	float4 TileToHeightMapScaleAndOffset[PDX_MAX_HEIGHTMAP_COMPRESS_LEVELS];
+	float2 WorldSpaceToLookup;
+	float2 OriginalHeightmapToWorldSpace;
+	float2 IndirectionSize;
+	float2 PackedHeightMapSize;
+	float BaseTileSize;
+	float HeightScale;
+}
+cbuffer pdx_hlsl_cb13
+{
+	float3 NormalScale;
+	float QuadtreeLeafNodeScale;
+	float2 NormalStepSize;
+	float2 DetailTileFactor;
+	float DetailBlendRange;
+	float SkirtSize;
+	float2 NormQuadtreeToWorld;
+	float2 WorldSpaceToTerrain0To1;
+	float2 WorldSpaceToDetail;
+	float2 DetailTexelSize;
+	float2 DetailTextureSize;
+	float2 WorldExtents;
+}
+cbuffer pdx_hlsl_cb15
+{
+	float3 AmbientPosX;
+	float CubemapIntensity;
+	float3 AmbientNegX;
+	float3 AmbientPosY;
+	float3 AmbientNegY;
+	float3 AmbientPosZ;
+	float3 AmbientNegZ;
+	float3 ShadowAmbientPosX;
+	float3 ShadowAmbientNegX;
+	float3 ShadowAmbientPosY;
+	float3 ShadowAmbientNegY;
+	float3 ShadowAmbientPosZ;
+	float3 ShadowAmbientNegZ;
+	float FogMax;
+	float3 SunDiffuse;
+	float SunIntensity;
+	float3 ToSunDir;
+	float FogBegin2;
+	float3 FogColor;
+	float FogEnd2;
+	float4x4 CubemapYRotation;
+	float TreeSwayLoopSpeed;
+	float TreeSwayWindStrengthSpatialModifier;
+	float TreeSwaySpeed;
+	float TreeSwayWindClusterSizeModifier;
+	float3 TreeSwayWorldDirection;
+	float TreeHeightImpactOnSway;
+	float TreeSwayScale;
+}
+cbuffer pdx_hlsl_cb9
+{
+	float2 FogOfWarAlphaMapSize;
+	float2 InverseWorldSize;
+	float2 FogOfWarPatternSpeed;
+	float FogOfWarPatternStrength;
+	float FogOfWarPatternTiling;
+	float FogOfWarTime;
+	float FogOfWarAlphaMin;
+}
+cbuffer pdx_hlsl_cb11
+{
+	float2 _ScreenResolution;
+	float _WaterReflectionNormalFlatten;
+	float _WaterZoomedInZoomedOutFactor;
+	float3 _WaterToSunDir;
+	float _WaterDiffuseMultiplier;
+	float3 _WaterColorShallow;
+	float _WaterSpecular;
+	float3 _WaterColorDeep;
+	float _WaterSpecularFactor;
+	float3 _WaterColorMapTint;
+	float _WaterColorMapTintFactor;
+	float _WaterGlossScale;
+	float _WaterGlossBase;
+	float _WaterFresnelBias;
+	float _WaterFresnelPow;
+	float _WaterCubemapIntensity;
+	float _WaterFoamScale;
+	float _WaterFoamDistortFactor;
+	float _WaterFoamShoreMaskDepth;
+	float _WaterFoamShoreMaskSharpness;
+	float _WaterFoamNoiseScale;
+	float _WaterFoamNoiseSpeed;
+	float _WaterFoamStrength;
+	float _WaterRefractionScale;
+	float _WaterRefractionShoreMaskDepth;
+	float _WaterRefractionShoreMaskSharpness;
+	float _WaterRefractionFade;
+	float2 _WaterWave1Scale;
+	float _WaterWave1Rotation;
+	float _WaterWave1Speed;
+	float2 _WaterWave2Scale;
+	float _WaterWave2Rotation;
+	float _WaterWave2Speed;
+	float2 _WaterWave3Scale;
+	float _WaterWave3Rotation;
+	float _WaterWave3Speed;
+	float _WaterWave1NormalFlatten;
+	float _WaterWave2NormalFlatten;
+	float _WaterWave3NormalFlatten;
+	float _WaterFlowTime;
+	float2 _WaterFlowMapSize;
+	float _WaterFlowNormalScale;
+	float _WaterFlowNormalFlatten;
+	float _WaterHeight;
+	float _WaterFadeShoreMaskDepth;
+	float _WaterFadeShoreMaskSharpness;
+	float _WaterSeeThroughDensity;
+	float _WaterSeeThroughShoreMaskDepth;
+	float _WaterSeeThroughShoreMaskSharpness;
+}
+cbuffer pdx_hlsl_cb2
+{
+	float2 MapSize;
+	float GlobalTime;
+	float FlatMapHeight;
+	float FlatMapLerp;
+	float MapHighlightIntensity;
+	float SnowHighlightIntensity;
+}
+
+
+// === Samplers === 
+
+SamplerState _sampler_0_ : register(s0);
+SamplerState _sampler_1_ : register(s1);
+SamplerState _sampler_2_ : register(s2);
+
+
+// === Textures === 
+
+Texture2D HeightLookupTexture_Texture;
+static PdxTextureSampler2D HeightLookupTexture = { HeightLookupTexture_Texture, _sampler_0_ };
+Texture2D PackedHeightTexture_Texture;
+static PdxTextureSampler2D PackedHeightTexture = { PackedHeightTexture_Texture, _sampler_1_ };
+Texture2D SnowDiffuseMap_Texture;
+static PdxTextureSampler2D SnowDiffuseMap = { SnowDiffuseMap_Texture, _sampler_2_ };
+Texture2D WinterTexture_Texture;
+static PdxTextureSampler2D WinterTexture = { WinterTexture_Texture, _sampler_2_ };
+
+
+// === RW Textures === 
+
+
+
+// === Buffer Textures === 
+
+PdxBufferFloat4 MapObjectBuffer;
+
+
+// === RW Buffer Textures === 
+
+
+
+// === Shader Code === 
+
+float CalcViewSpaceDepth( float Depth )
+{
+	Depth = 2.0 * Depth - 1.0;
+	float ZLinear = 2.0 * ZNear * ZFar / (ZFar + ZNear - Depth * (ZFar - ZNear));
+	return ZLinear;
+}
+
+float3 ViewSpacePosFromDepth( float Depth, float2 UV )
+{
+	float x = UV.x * 2.0 - 1.0;
+	float y = (1.0 - UV.y) * 2.0 - 1.0;
+	
+	float4 ProjectedPos = float4( x, y, Depth, 1.0 );
+	
+	float4 ViewSpacePos = mul( InvProjectionMatrix, ProjectedPos );
+	
+	return ViewSpacePos.xyz / ViewSpacePos.w;
+}
+
+float3 WorldSpacePositionFromDepth( float Depth, float2 UV )
+{
+	float3 WorldSpacePos = mul( InvViewMatrix, float4( ViewSpacePosFromDepth( Depth, UV ), 1.0 ) ).xyz;		
+	return WorldSpacePos;  
+}
+float CalcRandom( float Seed )
+{
+	float DotProduct = float( Seed ) * 12.9898;
+	return frac( sin( DotProduct ) * 43758.5453 );
+}
+
+float CalcRandom( float2 Seed )
+{
+	float DotProduct = dot( Seed, float2( 12.9898, 78.233 ) );
+	return frac( sin( DotProduct ) * 43758.5453 );
+}
+
+float CalcRandom( float3 Seed )
+{
+	float DotProduct = dot( Seed, float3( 12.9898,78.233,144.7272 ) );
+	return frac( sin( DotProduct ) * 43758.5453 );
+}
+
+float CalcNoise( float2 Pos ) 
+{
+	int2 i = int2( floor( Pos ) );
+	float2 f = frac( Pos );
+
+	float a = CalcRandom( i );
+	float b = CalcRandom( i + int2( 1, 0 ) );
+	float c = CalcRandom( i + int2( 0, 1 ) );
+	float d = CalcRandom( i + int2( 1, 1 ) );
+	
+	float2 u = f*f*(3.0-2.0*f);
+	return lerp(a, b, u.x) + 
+			(c - a)* u.y * (1.0 - u.x) + 
+			(d - b) * u.x * u.y;
+}
+static const int PDXMESH_MAX_INFLUENCE = 4;
+static const int PDXMESH_WORLD_MATRIX_OFFSET = 0;
+static const int PDXMESH_CONSTANTS_OFFSET = 4;
+static const int PDXMESH_USER_DATA_OFFSET = 5;
+
+float4x4 PdxMeshGetWorldMatrix( uint nIndex )
+{
+	return Create4x4( 
+		Data[nIndex + PDXMESH_WORLD_MATRIX_OFFSET + 0], 
+		Data[nIndex + PDXMESH_WORLD_MATRIX_OFFSET + 1], 
+		Data[nIndex + PDXMESH_WORLD_MATRIX_OFFSET + 2], 
+		Data[nIndex + PDXMESH_WORLD_MATRIX_OFFSET + 3] );
+}
+
+// OffsetJointIndex -> JointsInstanceIndex + JointIndex
+float4x4 PdxMeshGetJointVertexMatrix( uint OffsetJointIndex )
+{
+	uint BeginIndex = OffsetJointIndex * 3;
+
+	float4 XAxis = float4( JointVertexMatrices[ BeginIndex ].x, JointVertexMatrices[ BeginIndex ].y, JointVertexMatrices[ BeginIndex ].z, 0.0f );
+	float4 YAxis = float4( JointVertexMatrices[ BeginIndex ].w, JointVertexMatrices[ BeginIndex + 1 ].x, JointVertexMatrices[ BeginIndex + 1 ].y, 0.0f );
+	float4 ZAxis = float4( JointVertexMatrices[ BeginIndex + 1 ].z, JointVertexMatrices[ BeginIndex + 1 ].w, JointVertexMatrices[ BeginIndex + 2 ].x, 0.0f );
+	float4 Translation = float4( JointVertexMatrices[ BeginIndex + 2 ].y, JointVertexMatrices[ BeginIndex + 2 ].z, JointVertexMatrices[ BeginIndex + 2 ].w, 1.0f );
+
+	return Create4x4( XAxis, YAxis, ZAxis, Translation );
+}
+
+float PdxMeshGetOpacity( uint ObjectInstanceIndex )
+{
+	return Data[ ObjectInstanceIndex + PDXMESH_CONSTANTS_OFFSET ].x;
+} 
+
+uint GetActiveBlendShapes( uint ObjectInstanceIndex )
+{
+	return uint( Data[ ObjectInstanceIndex + PDXMESH_CONSTANTS_OFFSET ].y );
+}
+
+uint GetActiveDecals( uint ObjectInstanceIndex ) 
+{
+	return uint( Data[ ObjectInstanceIndex + PDXMESH_CONSTANTS_OFFSET ].z );
+}
+
+float PdxMeshGetMeshDummyValue( uint ObjectInstanceIndex ) 
+{
+	return Data[ ObjectInstanceIndex + PDXMESH_CONSTANTS_OFFSET ].w;
+}
+// Gamma correction utility
+float ToGamma(float aLinear)
+{
+	return pow(aLinear, 1.0/2.2);
+}
+float3 ToGamma(float3 aLinear)
+{
+	return pow(aLinear, vec3(1.0/2.2));
+}
+float ToLinear(float aGamma)
+{
+	return pow(aGamma, 2.2);
+}
+float3 ToLinear(float3 aGamma)
+{
+	return pow(aGamma, vec3(2.2));
+}
+float4 ToLinear(float4 aGamma)
+{
+	return float4(pow(aGamma.rgb, vec3(2.2)), aGamma.a);
+}
+
+// Color value conversions
+float3 RGBtoHSV( float3 RGB )
+{
+	float4 K = float4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+	float4 p = RGB.g < RGB.b ? float4(RGB.bg, K.wz) : float4(RGB.gb, K.xy);
+	float4 q = RGB.r < p.x ? float4(p.xyw, RGB.r) : float4(RGB.r, p.yzx);
+
+	float d = q.x - min(q.w, q.y);
+	float e = 1.0e-10;
+	return float3( abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x );
+}
+float3 HSVtoRGB( float3 HSV )
+{
+	float4 K = float4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+	float3 p = abs( frac(HSV.xxx + K.xyz) * 6.0 - K.www );
+	return HSV.z * lerp( K.xxx, clamp(p - K.xxx, 0.0, 1.0), HSV.y );
+}
+float3 HSVtoRGB( float H, float S, float V )
+{
+	return HSVtoRGB( float3( H, S, V ) );
+}
+float4 RGBtoHSV( float4 RGBa )
+{
+	return float4( RGBtoHSV( RGBa.rgb ), RGBa.a );
+}
+float4 HSVtoRGB( float4 HSVa )
+{
+	return float4( HSVtoRGB( HSVa.xyz ), HSVa.a );
+}
+float4 HSVtoRGB( float H, float S, float V, float a )
+{
+	return HSVtoRGB( float4( H, S, V, a ) );
+}
+
+// Below are multiple blend mode utilities (See: https://en.wikipedia.org/wiki/Blend_modes)
+// Most of these uses a typical implementation unless stated otherwise
+
+// Multiply blend mode
+float3 Multiply( float3 Base, float3 Blend, float Opacity )
+{
+	return Base * Blend * Opacity + Base * ( 1.0 - Opacity );
+}
+
+// Overlay blend mode
+float Overlay( float Base, float Blend )
+{
+	return (Base < 0.5) ? (2.0 * Base * Blend) : (1.0 - 2.0 * (1.0 - Base) * (1.0 - Blend));
+}
+float3 Overlay( float3 Base, float3 Blend )
+{
+	return float3( Overlay(Base.r, Blend.r), Overlay(Base.g, Blend.g), Overlay(Base.b, Blend.b) );
+}
+float Overlay( float Base, float Blend, float Opacity )
+{
+	return Overlay( Base, Blend ) * Opacity + Base * (1.0 - Opacity );
+}
+float3 Overlay( float3 Base, float3 Blend, float Opacity )
+{
+	return Overlay( Base, Blend ) * Opacity + Base * (1.0 - Opacity );
+}
+float3 GetOverlay( float3 Color, float3 OverlayColor, float OverlayPercent )
+{
+	// Flip OverlayColor/BaseColor since that was how it was before
+	return lerp( Color, Overlay( OverlayColor, Color ), OverlayPercent );
+}
+float GetOverlay( float Color, float OverlayColor, float OverlayPercent )
+{
+	// Flip OverlayColor/BaseColor since that was how it was before
+	return lerp( Color, Overlay( OverlayColor, Color ), OverlayPercent );
+}
+
+// Color dodge blend mode (Dodge and burn)
+float ColorDodge( float Base, float Blend )
+{
+	return (Blend == 1.0) ? Blend : min( Base / (1.0 - Blend), 1.0 );
+}
+float3 ColorDodge( float3 Base, float3 Blend )
+{
+	return float3( ColorDodge(Base.r, Blend.r), ColorDodge(Base.g, Blend.g), ColorDodge(Base.b, Blend.b) );
+}
+float3 ColorDodge( float3 Base, float3 Blend, float Opacity )
+{
+	return ColorDodge( Base, Blend ) * Opacity + Base * ( 1.0 - Opacity );
+}
+
+// Pegtop's SoftLight blend formula
+float SoftLight( float Base, float Blend )
+{
+	return ( 1 - 2 * Blend ) * Base * Base + 2 * Base * Blend;
+}
+float3 SoftLight( float3 Base, float3 Blend )
+{
+	return float3( SoftLight( Base.r, Blend.r ), SoftLight( Base.g, Blend.g ), SoftLight( Base.b, Blend.b ) );
+}
+float SoftLight( float Base, float Blend, float Opacity )
+{
+	return lerp( Base, SoftLight( Base, Blend ), Opacity );
+}
+float3 SoftLight( float3 Base, float3 Blend, float Opacity )
+{
+	return lerp( Base, SoftLight( Base, Blend ), Opacity );
+}
+
+// Hardlight blend mode
+float HardLight(float Base, float Blend)
+{
+	return Blend >= 0.5 ? 1.0 - 2 * ( 1.0 - Blend ) * ( 1.0 - Base ) : 2.0 * Base * Blend;
+}
+float3 HardLight( float3 Base, float3 Blend )
+{
+	return float3( HardLight( Base.r, Blend.r ), HardLight( Base.g, Blend.g ), HardLight( Base.b, Blend.b ) );
+}
+float HardLight( float Base, float Blend, float Opacity )
+{
+	return lerp( Base, HardLight( Base, Blend ), Opacity );
+}
+float3 HardLight( float3 Base, float3 Blend, float Opacity )
+{
+	return lerp( Base, HardLight( Base, Blend ), Opacity );
+}
+
+// Simple arithmetic blend modes (See: https://en.wikipedia.org/wiki/Blend_modes#Simple_arithmetic_blend_modes)
+// Lighten only blend mode
+float3 Add( float3 Base, float3 Blend, float Opacity )
+{
+	return ( Base + Blend ) * Opacity + Base * ( 1.0 - Opacity );
+}
+float Lighten( float Base, float Blend )
+{
+	return max( Base, Blend );
+}
+float3 Lighten( float3 Base, float3 Blend )
+{
+	return float3( Lighten(Base.r, Blend.r), Lighten(Base.g, Blend.g), Lighten(Base.b, Blend.b) );
+}
+float3 Lighten( float3 Base, float3 Blend, float Opacity )
+{
+	return Lighten( Base, Blend ) * Opacity + Base * ( 1.0 - Opacity );
+}
+
+// Darken only blend mode
+float Darken( float Base, float Blend )
+{
+	return min( Base, Blend );
+}
+float3 Darken( float3 Base, float3 Blend )
+{
+	return float3( Darken(Base.r, Blend.r), Darken(Base.g, Blend.g), Darken(Base.b, Blend.b) );
+}
+float3 Darken( float3 Base, float3 Blend, float Opacity )
+{
+	return Darken( Base, Blend ) * Opacity + Base * ( 1.0 - Opacity );
+}
+
+float3 Levels( float3 vInColor, float3 vMinInput, float3 vMaxInput )
+{
+	float3 vRet = saturate( vInColor - vMinInput );
+	vRet /= vMaxInput - vMinInput;
+	return saturate( vRet );
+}
+float Levels( float vInValue, float vMinValue, float vMaxValue )
+{
+	return saturate( ( vInValue - vMinValue ) / ( vMaxValue - vMinValue ) );
+}
+
+// Intuitive way to dynamically grow and shrink masks, similar to Histogram Scan in Substance Designer.
+// vInValue is typically a mask texture, vPosition is the value to be remapped to 0.5, vRange is the softness of that remap.
+float LevelsScan( float vInValue, float vPosition, float vRange )
+{
+	return Levels( vInValue, vPosition - ( vRange / 2 ), vPosition + ( vRange / 2 ) );
+}
+
+float3 UnpackNormal( float4 NormalMapSample )
+{
+	float3 vNormalSample = NormalMapSample.rgb - 0.5;
+	vNormalSample.g = -vNormalSample.g;
+	return vNormalSample;
+}
+
+float3 UnpackNormal( in PdxTextureSampler2D NormalTex, float2 uv )
+{
+	return UnpackNormal( PdxTex2D( NormalTex, uv ) );
+}
+
+float3 UnpackRRxGNormal( float4 NormalMapSample )
+{
+	float x = NormalMapSample.g * 2.0 - 1.0;
+	float y = NormalMapSample.a * 2.0 - 1.0;
+	y = -y;
+	float z = sqrt( saturate( 1.0 - x * x - y * y ) );
+	return float3( x, y, z );
+}
+
+float3 UnpackRRxGNormal( in PdxTextureSampler2D NormalTex, float2 uv )
+{
+	return UnpackRRxGNormal( PdxTex2D( NormalTex, uv ) );
+}
+
+float3 ReorientNormal( float3 BaseNormal, float3 DetailNormal )
+{
+	float3 t = BaseNormal + float3( 0.0, 0.0, 1.0 );
+	float3 u = DetailNormal * float3( -1.0, -1.0, 1.0 );
+	float3 Normal = normalize( t * dot( t, u ) - u * t.z );
+	return Normal;
+}
+
+float Fresnel( float NdotL, float FresnelBias, float FresnelPow )
+{
+	return saturate( FresnelBias + (1.0 - FresnelBias) * pow( 1.0 - NdotL, FresnelPow ) );
+}
+
+#define REMAP_IMPL NewMin + ( NewMax - NewMin ) * ( (Value - OldMin) / (OldMax - OldMin) )
+float Remap( float Value, float OldMin, float OldMax, float NewMin, float NewMax ) { return REMAP_IMPL; }
+float2 Remap( float2 Value, float2 OldMin, float2 OldMax, float2 NewMin, float2 NewMax ) { return REMAP_IMPL; }
+float3 Remap( float3 Value, float3 OldMin, float3 OldMax, float3 NewMin, float3 NewMax ) { return REMAP_IMPL; }
+#undef REMAP_IMPL
+#define REMAP_IMPL NewMin + ( NewMax - NewMin ) * saturate( (Value - OldMin) / (OldMax - OldMin) )
+float RemapClamped( float Value, float OldMin, float OldMax, float NewMin, float NewMax ) { return REMAP_IMPL; }
+float2 RemapClamped( float2 Value, float2 OldMin, float2 OldMax, float2 NewMin, float2 NewMax ) { return REMAP_IMPL; }
+float3 RemapClamped( float3 Value, float3 OldMin, float3 OldMax, float3 NewMin, float3 NewMax ) { return REMAP_IMPL; }
+#undef REMAP_IMPL
+float2 GetLookupCoordinates( float2 WorldSpacePosXZ )
+{
+	return clamp( WorldSpacePosXZ * WorldSpaceToLookup, vec2( 0.0 ), vec2( 0.999999 ) );
+}
+
+float4 SampleLookupTexture( float2 LookupCoordinates )
+{
+	float4 IndirectionSample = PdxTex2DLod0( HeightLookupTexture, ( floor( LookupCoordinates * IndirectionSize ) + vec2( 0.5 ) ) / IndirectionSize ) * 255.0;
+	return IndirectionSample;
+}
+
+float2 GetTileUV( float2 LookupCoordinates, float4 IndirectionSample, out float CurrentTileScale )
+{
+	float CurrentTileSize = (BaseTileSize - 1.0) / IndirectionSample.z + 1;
+	float CurrentTileOffset = 0.5 / CurrentTileSize;
+	CurrentTileScale = (CurrentTileSize - 1.0) / CurrentTileSize;
+	
+	float2 WithinTileZeroToOne = frac( LookupCoordinates * IndirectionSize );
+	float2 WithinTileUV = vec2( CurrentTileOffset ) + WithinTileZeroToOne * CurrentTileScale;
+	float2 TileUV = IndirectionSample.rg + WithinTileUV;
+	
+	return TileUV;
+}
+
+float2 GetHeightMapCoordinates( float2 WorldSpacePosXZ )
+{
+	float2 LookupCoordinates = GetLookupCoordinates( WorldSpacePosXZ );
+	float4 IndirectionSample = SampleLookupTexture( LookupCoordinates );
+
+	float4 CurrentTileToHeightMapScaleAndOffset = TileToHeightMapScaleAndOffset[int(IndirectionSample.w)];
+	float CurrentTileScale;
+	float2 TileUV = GetTileUV( LookupCoordinates, IndirectionSample, CurrentTileScale );
+	
+	float2 HeightMapCoord = TileUV * CurrentTileToHeightMapScaleAndOffset.xy + CurrentTileToHeightMapScaleAndOffset.zw; // 0 -> 1 in packed heightmap
+	return HeightMapCoord;
+}
+
+float GetHeight01( float2 WorldSpacePosXZ )
+{
+	float2 HeightMapCoord = GetHeightMapCoordinates( WorldSpacePosXZ );
+	return PdxTex2DLod0( PackedHeightTexture, HeightMapCoord ).r;
+}
+
+float GetHeight( float2 WorldSpacePosXZ )
+{
+	return GetHeight01( WorldSpacePosXZ ) * HeightScale;
+}
+
+
+float GetHeightMultisample01( float2 WorldSpacePosXZ, float FilterSize )
+{
+	//return GetHeight( WorldSpacePosXZ );
+
+	float2 LookupCoordinates = GetLookupCoordinates( WorldSpacePosXZ );
+	float2 FilterSizeInWorldSpace = FilterSize * OriginalHeightmapToWorldSpace;
+	float2 FilterSizeInLookup = FilterSizeInWorldSpace * WorldSpaceToLookup * IndirectionSize;
+	
+	float2 FracCoordinates = frac( LookupCoordinates * IndirectionSize );
+	float2 MinFracCoordinatesScaled = min( FracCoordinates, vec2(1.0) - FracCoordinates );
+	bool2 InBorder = lessThan( MinFracCoordinatesScaled, FilterSizeInLookup );
+
+	float Height = 0.0;
+	if ( any( InBorder ) )
+	{
+		Height = GetHeight01( WorldSpacePosXZ );
+		Height += GetHeight01( WorldSpacePosXZ + float2( -FilterSizeInWorldSpace.x, 0 ) );
+		Height += GetHeight01( WorldSpacePosXZ + float2( 0, -FilterSizeInWorldSpace.y ) );
+		Height += GetHeight01( WorldSpacePosXZ + float2( FilterSizeInWorldSpace.x, 0 ) );
+		Height += GetHeight01( WorldSpacePosXZ + float2( 0, FilterSizeInWorldSpace.y ) );
+		Height += GetHeight01( WorldSpacePosXZ + float2( -FilterSizeInWorldSpace.x, -FilterSizeInWorldSpace.y ) );
+		Height += GetHeight01( WorldSpacePosXZ + float2(  FilterSizeInWorldSpace.x, -FilterSizeInWorldSpace.y ) );
+		Height += GetHeight01( WorldSpacePosXZ + float2(  FilterSizeInWorldSpace.x,  FilterSizeInWorldSpace.y ) );
+		Height += GetHeight01( WorldSpacePosXZ + float2( -FilterSizeInWorldSpace.x,  FilterSizeInWorldSpace.y ) );
+	}
+	else
+	{
+		float4 IndirectionSample = SampleLookupTexture( LookupCoordinates );
+		
+		float4 CurrentTileToHeightMapScaleAndOffset = TileToHeightMapScaleAndOffset[int(IndirectionSample.w)];
+		float CurrentTileScale;
+		float2 TileUV = GetTileUV( LookupCoordinates, IndirectionSample, CurrentTileScale );
+		
+		float2 HeightMapCoord = TileUV * CurrentTileToHeightMapScaleAndOffset.xy + CurrentTileToHeightMapScaleAndOffset.zw; // 0 -> 1 in packed heightmap
+		float2 FilterSizeInTile = FilterSizeInLookup * CurrentTileToHeightMapScaleAndOffset.xy * CurrentTileScale;
+		
+		Height = PdxTex2DLod0( PackedHeightTexture, HeightMapCoord ).r;
+		Height += PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2( -FilterSizeInTile.x, 0 ) ).r;
+		Height += PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2( 0, -FilterSizeInTile.y ) ).r;
+		Height += PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2( FilterSizeInTile.x, 0 ) ).r;
+		Height += PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2( 0, FilterSizeInTile.y ) ).r;
+		Height += PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2( -FilterSizeInTile.x, -FilterSizeInTile.y ) ).r;
+		Height += PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2(  FilterSizeInTile.x, -FilterSizeInTile.y ) ).r;
+		Height += PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2(  FilterSizeInTile.x,  FilterSizeInTile.y ) ).r;
+		Height += PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2( -FilterSizeInTile.x,  FilterSizeInTile.y ) ).r;
+	}
+	
+	Height /= 9.0;
+	return Height;
+}
+
+float GetHeightMultisample( float2 WorldSpacePosXZ, float FilterSize )
+{
+	return GetHeightMultisample01( WorldSpacePosXZ, FilterSize ) * HeightScale;
+}
+
+
+// SAVE
+static const float c_x0 = -1.0;
+static const float c_x1 =  0.0;
+static const float c_x2 =  1.0;
+static const float c_x3 =  2.0;
+    
+//=======================================================================================
+float CubicLagrange(float A, float B, float C, float D, float t)
+{
+	return
+		A * 
+		(
+			(t - c_x1) / (c_x0 - c_x1) * 
+			(t - c_x2) / (c_x0 - c_x2) *
+			(t - c_x3) / (c_x0 - c_x3)
+		) +
+		B * 
+		(
+			(t - c_x0) / (c_x1 - c_x0) * 
+			(t - c_x2) / (c_x1 - c_x2) *
+			(t - c_x3) / (c_x1 - c_x3)
+		) +
+		C * 
+		(
+			(t - c_x0) / (c_x2 - c_x0) * 
+			(t - c_x1) / (c_x2 - c_x1) *
+			(t - c_x3) / (c_x2 - c_x3)
+		) +       
+		D * 
+		(
+			(t - c_x0) / (c_x3 - c_x0) * 
+			(t - c_x1) / (c_x3 - c_x1) *
+			(t - c_x2) / (c_x3 - c_x2)
+		);
+}
+    
+//=======================================================================================
+float BicubicLagrangeBilinearGetHeight01( float2 WorldSpacePosXZ )
+{
+	float2 Pixel = WorldSpacePosXZ - 0.5;
+
+	float2 FracCoord = frac(Pixel);
+	Pixel = floor(Pixel) + 0.5;
+	
+	float C00 = GetHeight01( float2( Pixel.x - 1, Pixel.y - 1 ) );
+	float C10 = GetHeight01( float2( Pixel.x - 0, Pixel.y - 1 ) );
+	float C20 = GetHeight01( float2( Pixel.x + 1, Pixel.y - 1 ) );
+	float C30 = GetHeight01( float2( Pixel.x + 2, Pixel.y - 1 ) );
+	
+	float C01 = GetHeight01( float2( Pixel.x - 1, Pixel.y - 0 ) );
+	float C11 = GetHeight01( float2( Pixel.x - 0, Pixel.y - 0 ) );
+	float C21 = GetHeight01( float2( Pixel.x + 1, Pixel.y - 0 ) );
+	float C31 = GetHeight01( float2( Pixel.x + 2, Pixel.y - 0 ) );
+	
+	float C02 = GetHeight01( float2( Pixel.x - 1, Pixel.y + 1 ) );
+	float C12 = GetHeight01( float2( Pixel.x - 0, Pixel.y + 1 ) );
+	float C22 = GetHeight01( float2( Pixel.x + 1, Pixel.y + 1 ) );
+	float C32 = GetHeight01( float2( Pixel.x + 2, Pixel.y + 1 ) );
+	
+	float C03 = GetHeight01( float2( Pixel.x - 1, Pixel.y + 2 ) );
+	float C13 = GetHeight01( float2( Pixel.x - 0, Pixel.y + 2 ) );
+	float C23 = GetHeight01( float2( Pixel.x + 1, Pixel.y + 2 ) );
+	float C33 = GetHeight01( float2( Pixel.x + 2, Pixel.y + 2 ) );
+	
+	float CP0X = CubicLagrange(C00, C10, C20, C30, FracCoord.x);
+	float CP1X = CubicLagrange(C01, C11, C21, C31, FracCoord.x);
+	float CP2X = CubicLagrange(C02, C12, C22, C32, FracCoord.x);
+	float CP3X = CubicLagrange(C03, C13, C23, C33, FracCoord.x);
+	
+	return CubicLagrange(CP0X, CP1X, CP2X, CP3X, FracCoord.y);
+}
+
+//float BilinearGetHeight( float3 WorldSpacePos )
+//{
+//	float2 Pixel = WorldSpacePos.xz;
+//	
+//	float2 FracCoord = frac(Pixel);
+//	Pixel = floor(Pixel);
+//	
+//	float H11 = GetHeight01( float3( Pixel.x, 0.0, Pixel.y ) );
+//	float H21 = GetHeight01( float3( Pixel.x + 1.0, 0.0, Pixel.y ) );
+//	float H12 = GetHeight01( float3( Pixel.x, 0.0, Pixel.y + 1.0 ) );
+//	float H22 = GetHeight01( float3( Pixel.x + 1.0, 0.0, Pixel.y + 1.0 ) );
+//	
+//	//return H11;
+//	//return FracCoord.x;
+//	
+//	float h1 = lerp( H11, H21, FracCoord.x );
+//	float h2 = lerp( H12, H22, FracCoord.x );
+//	return lerp( h1, h2, FracCoord.y );
+//}
+// These macros can be used as drop in replacements for their counterparts without the "Upscale" postfix.
+// They will take care of using the correct lod bias when sampling the textures to account for rendering happening in lower resolution. (See https://gsg.pages.build.paradox-interactive.com/tech/cw/develop/clausewitz/pdx_gfx/upscaling/ for more information)
+// Note that by default when using upscaling it will add an extra -1 lod bias, this is to try and boost the quality a bit, it works because the temporal anti aliasing component can take care of some of the aliasing artifacts that is introduced by the lod bias.
+// This might not always be preferrable, in those cases the "UpscaleBias" postfix versions can be used to undo the extra lod bias, the provided bias should most likely be in the range (0.0, 1.0), for example doing PdxTex2DUpscaleBias( Tex, Uv, 1.0 ) will net you the same texture quality you would get rendering in native resolution.
+// There is also a "UpscaleNative" that is basically the same as UpscaleBias with bias 1.0, but slightly more optimized.
+
+#ifdef PDX_UPSCALING_ENABLED
+	float2 ApplyUpscaleLodBiasMultiplier( float2 Derivative ) { return Derivative * _UpscaleLodBiasMultiplier; }
+	float2 ApplyUpscaleNativeLodBiasMultiplier( float2 Derivative ) { return Derivative * _UpscaleLodBiasMultiplierNative; }
+	
+	#define PdxTex2DUpscale( TextureSampler, Uv ) PdxTex2DBias( (TextureSampler), (Uv), _UpscaleLodBias )
+	#define PdxTex2DUpscaleNative( TextureSampler, Uv ) PdxTex2DBias( (TextureSampler), (Uv), _UpscaleLodBiasNative )
+	#define PdxTex2DUpscaleBias( TextureSampler, Uv, Bias ) PdxTex2DBias( (TextureSampler), (Uv), (_UpscaleLodBias + (Bias) * _UpscaleLodBiasEnabled) )
+	
+	#define PdxTex2DGradUpscale( TextureSampler, Uv, Ddx, Ddy ) PdxTex2DGrad( (TextureSampler), (Uv), ApplyUpscaleLodBiasMultiplier( Ddx ), ApplyUpscaleLodBiasMultiplier( Ddy ) )
+	#define PdxTex2DGradUpscaleNative( TextureSampler, Uv, Ddx, Ddy ) PdxTex2DGrad( (TextureSampler), (Uv), ApplyUpscaleNativeLodBiasMultiplier( Ddx ), ApplyUpscaleNativeLodBiasMultiplier( Ddy ) )
+	#define PdxTex2DGradUpscaleBias( TextureSampler, Uv, Ddx, Ddy, Bias ) PdxTex2DGrad( (TextureSampler), (Uv), ApplyUpscaleLodBiasMultiplier( Ddx ) * exp2( (Bias) * _UpscaleLodBiasEnabled ), ApplyUpscaleLodBiasMultiplier( Ddy ) * exp2( (Bias) * _UpscaleLodBiasEnabled ) )
+#else
+	float2 ApplyUpscaleLodBiasMultiplier( float2 Derivative ) { return Derivative; }
+	float2 ApplyUpscaleNativeLodBiasMultiplier( float2 Derivative ) { return Derivative; }
+	
+	#define PdxTex2DUpscale( TextureSampler, Uv ) PdxTex2D( (TextureSampler), (Uv) )
+	#define PdxTex2DUpscaleNative( TextureSampler, Uv ) PdxTex2D( (TextureSampler), (Uv) )
+	// We intentionally discard the Bias argument here since that is used to tweak the upscale added lodbias
+	#define PdxTex2DUpscaleBias( TextureSampler, Uv, Bias ) PdxTex2D( (TextureSampler), (Uv) )
+	
+	#define PdxTex2DGradUpscale( TextureSampler, Uv, Ddx, Ddy ) PdxTex2DGrad( (TextureSampler), (Uv), Ddx, Ddy )
+	#define PdxTex2DGradUpscaleNative( TextureSampler, Uv, Ddx, Ddy ) PdxTex2DGrad( (TextureSampler), (Uv), Ddx, Ddy )
+	// We intentionally discard the Bias argument here since that is used to tweak the upscale added lodbias
+	#define PdxTex2DGradUpscaleBias( TextureSampler, Uv, Ddx, Ddy, Bias ) PdxTex2DGrad( (TextureSampler), (Uv), Ddx, Ddy )
+#endif
+float GetLerpedHeight( float2 WorldSpacePosXZ, float2 LodDirection )
+{
+	float h1 = GetHeight( WorldSpacePosXZ - LodDirection );
+	float h2 = GetHeight( WorldSpacePosXZ + LodDirection );
+
+	//h1 = GetHeightMultisample( WorldSpacePosXZ - LodDirection, 0.25 );
+	//h2 = GetHeightMultisample( WorldSpacePosXZ + LodDirection, 0.25 );
+
+	return (h1 + h2) * 0.5;
+}
+
+float3 CalculateNormal( float2 WorldSpacePosXZ )
+{
+#ifdef TERRAIN_WRAP_X
+	float TerrainSizeX = 1.0 / WorldSpaceToTerrain0To1.x;
+
+	float HeightMinX = GetHeight01( float2( mod( WorldSpacePosXZ.x + TerrainSizeX - NormalStepSize.x, TerrainSizeX ), WorldSpacePosXZ.y ) );
+	float HeightMaxX = GetHeight01( float2( mod( WorldSpacePosXZ.x + TerrainSizeX + NormalStepSize.x, TerrainSizeX ), WorldSpacePosXZ.y ) );
+#else
+	float HeightMinX = GetHeight01( WorldSpacePosXZ + float2(-NormalStepSize.x, 0) );
+	float HeightMaxX = GetHeight01( WorldSpacePosXZ + float2(NormalStepSize.x, 0) );
+#endif
+	float HeightMinZ = GetHeight01( WorldSpacePosXZ + float2(0, -NormalStepSize.y) );
+	float HeightMaxZ = GetHeight01( WorldSpacePosXZ + float2(0, NormalStepSize.y) );
+
+	//float2 LookupCoordinates = GetLookupCoordinates( WorldSpacePosXZ );
+	//float2 NormalStepSizeInLookup = NormalStepSize * WorldSpaceToLookup * IndirectionSize;
+	//
+	//float2 FracCoordinates = frac( LookupCoordinates * IndirectionSize );
+	//float2 MinFracCoordinatesScaled = min( FracCoordinates, vec2(1.0) - FracCoordinates );
+	//bool2 InBorder = lessThan( MinFracCoordinatesScaled, NormalStepSizeInLookup );
+    //
+	//float HeightMinX = 0.0;
+	//float HeightMaxX = 0.0;
+	//float HeightMinZ = 0.0;
+	//float HeightMaxZ = 0.0;
+	//if ( any( InBorder ) )
+	//{
+	//	HeightMinX = GetHeight01( WorldSpacePosXZ + float2(-NormalStepSize.x, 0) );
+	//	HeightMaxX = GetHeight01( WorldSpacePosXZ + float2(NormalStepSize.x, 0) );
+	//	HeightMinZ = GetHeight01( WorldSpacePosXZ + float2(0, -NormalStepSize.y) );
+	//	HeightMaxZ = GetHeight01( WorldSpacePosXZ + float2(0, NormalStepSize.y) );
+	//}
+	//else
+	//{
+	//	float4 IndirectionSample = SampleLookupTexture( LookupCoordinates );
+	//
+	//	float4 CurrentTileToHeightMapScaleAndOffset = TileToHeightMapScaleAndOffset[int(IndirectionSample.w)];
+	//	float CurrentTileScale;
+	//	float2 TileUV = GetTileUV( LookupCoordinates, IndirectionSample, CurrentTileScale );
+	//
+	//	float2 HeightMapCoord = TileUV * CurrentTileToHeightMapScaleAndOffset.xy + CurrentTileToHeightMapScaleAndOffset.zw; // 0 -> 1 in packed heightmap
+	//	float2 NormalStepSizeInTile = NormalStepSizeInLookup * CurrentTileToHeightMapScaleAndOffset.xy * CurrentTileScale;
+	//
+	//	HeightMinX = PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2(-NormalStepSizeInTile.x, 0) );
+	//	HeightMaxX = PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2(NormalStepSizeInTile.x, 0) );
+	//	HeightMinZ = PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2(0, -NormalStepSizeInTile.y) );
+	//	HeightMaxZ = PdxTex2DLod0( PackedHeightTexture, HeightMapCoord + float2(0, NormalStepSizeInTile.y) );
+	//}
+
+	float3 Normal = float3( HeightMinX - HeightMaxX, 2.0, HeightMinZ - HeightMaxZ ) * NormalScale;
+	return normalize(Normal);
+}
+
+// Rotates normals to the heightmap terrain normal
+float3 SimpleRotateNormalToTerrain( float3 Normal, float2 WorldSpacePosXZ )
+{
+	float3 TerrainNormal = CalculateNormal( WorldSpacePosXZ );
+	float3 Up = float3( 0.0, 1.0, 0.0 );
+
+	float3 Axis = cross( Up, TerrainNormal );
+	float Angle = acos( dot( Up, TerrainNormal ) ) * abs( Normal.y );
+
+	return lerp( dot( Axis, Normal ) * Axis, Normal, cos( Angle ) ) + cross( Axis, Normal ) * sin( Angle );
+}
+
+// For debugging
+float GetTextureBorder( float2 UV, float2 TextureSize, float BorderSize )
+{
+	float2 FracScaledUV = frac( UV * TextureSize );
+	if ( FracScaledUV.x < BorderSize || FracScaledUV.x > (1.0 - BorderSize) || FracScaledUV.y < BorderSize || FracScaledUV.y > (1.0 - BorderSize) )
+	{
+		return 1.0;
+	}
+	else
+	{
+		return 0.0;
+	}
+}
+
+float GetModValue( float value, float vMod )
+{
+	return mod(round(value), vMod) * (1.0 / (vMod - 1.0));
+}
+

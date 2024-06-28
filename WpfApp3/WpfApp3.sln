@@ -1,0 +1,43 @@
+
+
+// === Shader Info === 
+
+// Shader file: gfx/FX/pdxwater.shader
+// Effect: water
+
+
+
+// === Defines === 
+
+#define PDX_DIRECTX_11
+#define VERTEX_SHADER
+#define PDX_HLSL
+#define VENDOR_NVIDIA
+#define WATER_COLOR_OVERLAY
+#define PDX_MAX_HEIGHTMAP_COMPRESS_LEVELS 5
+#define JOMINI_REFRACTION_ENABLED
+#define PDX_WINDOWS
+
+
+// === HLSL Macros === 
+
+#define PDX_POSITION SV_Position
+#define PDX_COLOR SV_Target
+#define PDX_COLOR0 SV_Target0
+#define PDX_COLOR0_SRC1 SV_Target1 // Use this when doing dual source blending, currently only supports that for render target #0
+#define PDX_COLOR1 SV_Target1
+#define PDX_COLOR2 SV_Target2
+#define PDX_COLOR3 SV_Target3
+#define PDX_COLOR4 SV_Target4
+#define PDX_COLOR5 SV_Target5
+#define PDX_COLOR6 SV_Target6
+#define PDX_COLOR7 SV_Target7
+#define PDX_VertexID SV_VertexID
+#define PDX_InstanceID SV_InstanceID
+#define PDX_DispatchThreadID SV_DispatchThreadID
+#define PDX_GroupThreadID SV_GroupThreadID
+#define PDX_GroupID SV_GroupID
+#define PDX_GroupIndex SV_GroupIndex
+#define PDX_TessFactor SV_TessFactor
+#define PDX_InsideTessFactor SV_InsideTessFactor
+#define PDX_OutputControlPointID SV_
